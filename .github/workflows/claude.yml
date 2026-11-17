@@ -1,10 +1,13 @@
 name: Claude
 
+# 停止中：認証情報を登録しない方針のため、自動では動かさない。
+# 再開するときは下の workflow_dispatch を消して、コメントアウトを戻す。
 on:
-  issues:
-    types: [opened]
-  issue_comment:
-    types: [created]
+  workflow_dispatch:
+#  issues:
+#    types: [opened]
+#  issue_comment:
+#    types: [created]
 
 jobs:
   claude:
