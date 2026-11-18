@@ -1,0 +1,519 @@
+<!-- # ファイル名: komorebi-caverns.html -->
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>こもれび鉱洞</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#101818;color:#f2e9d4;font:15px system-ui,sans-serif}
+main{max-width:1080px;padding:22px;margin:auto}header,section,.row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+h1{margin:0;font-size:25px}h2{font-size:15px;margin:0 0 10px}p{margin:9px 0;color:#b8c8b8}canvas{display:block;width:100%;background:#243c42;image-rendering:pixelated;border-radius:10px;touch-action:none;outline-offset:3px}
+.stage{position:relative;margin:13px 0}.hud{position:absolute;top:9px;left:9px;padding:6px 9px;border-radius:5px;background:#13201de8;pointer-events:none}
+section{background:#192523;padding:12px;border-radius:9px;margin-top:8px}section>div{flex:auto}.row{justify-content:flex-start}
+button,select{font:inherit;color:inherit;background:#263c35;border:1px solid #567369;border-radius:6px;padding:6px 10px;cursor:pointer}button[aria-pressed=true]{border-color:#ffd193;background:#58422d}button:disabled,select:disabled{opacity:.48;cursor:default}
+#message{min-height:23px;color:#ffda9d}#movement{display:none}@media(pointer:coarse){#movement{display:flex;margin-top:8px}}
+[hidden]{display:none!important}.inventory{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:5px;margin-top:7px}.item{display:flex;justify-content:space-between;gap:5px;background:#22342f;border:1px solid #3b554b;border-radius:5px;padding:6px 8px;font-size:13px}.item.empty{opacity:.48}.count{color:#ffcf8a;font-variant-numeric:tabular-nums}.stock-group{margin:10px 0 0;font-size:13px;color:#bacabd}#furnaceControls{border-top:1px solid #375047;margin-top:10px;padding-top:10px}input[type=number]{width:65px;font:inherit;margin-left:4px;padding:4px}#smeltPreview{font-size:13px}
+</style>
+<main>
+<header><h1>こもれび鉱洞 <small style="font-size:13px;color:#aac3b3">試作 v3</small></h1><span id="goal"></span></header>
+<div class="stage"><canvas id="game" width="720" height="360" tabindex="0" aria-label="こもれび鉱洞"></canvas><div class="hud" id="health"></div></div>
+<div class="row">
+<button id="pick" data-tool="pick">1 ツルハシ</button><button id="sword" data-tool="sword">2 剣</button><button id="axe" data-tool="axe">3 斧</button><button id="return" type="button"></button>
+</div>
+<div class="row" id="movement"><button data-key="a">◀ 左</button><button data-key="d">右 ▶</button><button data-key=" ">↑ ジャンプ</button></div>
+<p>A / D または ← / → で移動、Space でジャンプ。左クリックを長押しすると、選んだ武器や道具を連続で振ります。</p>
+<section><div><h2>工房 <span id="near"></span></h2><div class="row">
+<button id="smelt" aria-expanded="false" aria-controls="furnaceControls">かまどを開く</button><button id="craftCopper">銅の剣 · 銅2＋木1</button>
+<button id="craftBronze">青銅の剣 · 銅2＋錫1＋木1</button><button id="craftPick">青銅のツルハシ · 銅2＋錫1＋木1</button>
+</div><div id="furnaceControls" hidden><div class="row">
+<label>投入する鉱石 <select id="oreChoice"><option value="all">すべての鉱石</option><option value="3">銅鉱石</option><option value="4">錫石</option><option value="6">赤鉄鉱</option></select></label>
+<label id="quantityLabel" hidden>数量 <input id="quantity" type="number" min="1" step="1" value="1"></label>
+<button id="ignite" type="button">火を入れる</button><button id="collect" type="button" hidden>地金を回収</button>
+</div><p id="smeltPreview"></p></div></div></section>
+<section><div><h2>装備と素材</h2><div class="row">
+<label>剣 <select id="weapon"></select></label>
+<label>通常攻撃 <select id="motion"><option value="slash">横斬り</option><option value="rise" disabled>切り上げ（剣で3回命中）</option></select></label>
+</div>
+<p id="motionInfo"></p>
+<div class="stock-group">鉱石・木材</div><div class="inventory" id="oreInventory"></div>
+<div class="stock-group">地金</div><div class="inventory" id="barInventory"></div>
+<div class="stock-group">道具・装備</div><div class="inventory" id="gearInventory"></div>
+</div></section>
+<p id="message" role="status"></p>
+</main>
+<script>
+'use strict';
+const byId = id => document.getElementById(id);
+const canvas = byId('game');
+const ctx = canvas.getContext('2d');
+const TILE = 9;
+const MAP_UNIT = TILE * 2;
+const mapColumns = 82, mapRows = 23;
+const widths = mapColumns * 2, heights = mapRows * 2;
+const ROCK = 1, EARTH = 2, COPPER = 3, TIN = 4, HARD = 5, IRON = 6;
+const colors = ['', '#57596a', '#80604a', '#d98b50', '#a6c1ca', '#414455', '#c77c7b'];
+const materials = {[COPPER]: '銅鉱石', [TIN]: '錫石', [IRON]: '赤鉄鉱'};
+const metalNames = {[COPPER]: '銅', [TIN]: '錫', [IRON]: '鉄'};
+const layout = Array.from({length: mapRows}, (_, y) => Array.from({length: mapColumns}, (_, x) => y < 11 ? 0 : y === 11 && (x < 14 || x > 23) ? EARTH : ROCK));
+function hollow(x, y, w, h) {
+  for (let row = y; row < y + h; row++) for (let col = x; col < x + w; col++) layout[row][col] = 0;
+}
+hollow(15, 11, 4, 2);
+hollow(17, 13, 5, 2);
+hollow(20, 15, 33, 2);
+hollow(22, 14, 31, 1);
+hollow(53, 14, 7, 3);
+hollow(60, 13, 13, 4);
+for (const [x,y,id] of [[17,11,COPPER],[15,13,COPPER],[16,13,COPPER],[19,13,COPPER],[23,16,COPPER],[24,16,COPPER],[24,17,COPPER],[27,17,COPPER],[31,16,TIN],[32,16,TIN],[33,17,TIN],[54,14,HARD],[54,15,HARD],[54,16,HARD],[60,16,IRON],[61,16,IRON],[62,16,IRON]]) layout[y][x] = id;
+const world = Array.from({length: heights}, (_, y) =>
+  Array.from({length: widths}, (_, x) => {
+    const id = layout[y >> 1][x >> 1];
+    if (Object.hasOwn(materials,id) && (x % 2 || y % 2)) return ROCK;
+    return id;
+  }));
+const playerHeight = 31;
+const surfaceY = 11 * MAP_UNIT;
+const spawn = {x: 6 * MAP_UNIT, y: surfaceY - playerHeight};
+const player = {...spawn, w: 13, h: playerHeight, vx: 0, vy: 0, grounded: false, facing: 1, hp: 100, immunity: 0};
+const trees = [3, 10, 25, 33, 46, 58, 69, 77].map(column => ({x: column*MAP_UNIT, hits: 0}));
+const raw = {[COPPER]: 0, [TIN]: 0, [IRON]: 0};
+const bars = {[COPPER]: 0, [TIN]: 0, [IRON]: 0};
+const equipment = new Set();
+const keys = new Set();
+const enemies = [
+  {kind: 'スライム', x: 29 * MAP_UNIT, y: 17 * MAP_UNIT - 15, min: 26, max: 30, h: 15, w: 19, hp: 5, direction: -1, pace: 42},
+  {kind: '殻甲虫', x: 44 * MAP_UNIT, y: 17 * MAP_UNIT - 18, min: 41, max: 47, h: 18, w: 24, hp: 11, direction: -1, pace: 28, shell: 2},
+  {kind: '穴コウモリ', x: 49 * MAP_UNIT, y: 15 * MAP_UNIT, min: 48, max: 52, h: 11, w: 20, hp: 5, direction: -1, pace: 50, flies: true}
+];
+let tool = 'pick', blade = '', motion = 'slash', hits = 0, scrolls = 1, furnace = false, upgraded = false, won = false;
+let pointerClient = null, activePointer = null, swing = null, view = {x: 0, y: 0}, wood = 0;
+let furnaceOpen = false, batch = null;
+const cracks = new Map();
+const toolKeys = {'1': 'pick', '2': 'sword', '3': 'axe'};
+const keysForGame = ['a','d','arrowleft','arrowright',' ','arrowup',...Object.keys(toolKeys)];
+const swordMotions = {
+  slash: {start: -.30, end: .28, reach: 68, color: '#ffd18a', fill: '#ffcf833b', description: '横斬り　前方へ長く届く。地上の敵向き。'},
+  rise: {start: -2.18, end: -.46, reach: 65, color: '#9fe8ff', fill: '#91dbff3f', description: '切り上げ　斜め上から頭上を斬る。空中の敵向き。'}
+};
+const names = {copper: '銅の剣', bronze: '青銅の剣'};
+const clamp = (n,min,max) => Math.max(min, Math.min(max,n));
+const nearWorkshop = () => Math.abs(player.x - spawn.x) < 92 && Math.abs(player.y - spawn.y) < 40;
+const tile = (x,y) => x < 0 || x >= widths || y >= heights ? ROCK : y < 0 ? 0 : world[y][x];
+function show(message) { byId('message').textContent = message; }
+function inventory(id, items) {
+  const grid = byId(id);
+  const signature = JSON.stringify(items);
+  if (grid.dataset.items === signature) return;
+  grid.dataset.items = signature;
+  grid.replaceChildren(...items.map(([name, number]) => {
+    const slot = document.createElement('div');
+    slot.className = 'item' + (number === 0 ? ' empty' : '');
+    const count = document.createElement('span');
+    count.className = 'count';
+    count.textContent = '×' + number;
+    slot.append(name, count);
+    return slot;
+  }));
+}
+function selectedOres() {
+  const selected = byId('oreChoice').value;
+  if (selected === 'all') return Object.entries(raw).filter(([, count]) => count > 0);
+  const count = Math.min(raw[selected] || 0, Math.max(0, Math.floor(Number(byId('quantity').value)) || 0));
+  return count ? [[selected, count]] : [];
+}
+function formatMetals(items) {
+  return items.map(([id, count]) => metalNames[id] + ' ×' + count).join('、');
+}
+function refreshFurnace(home) {
+  byId('smelt').disabled = !home;
+  const visible = home && furnaceOpen;
+  byId('smelt').setAttribute('aria-expanded', visible);
+  byId('furnaceControls').hidden = !visible;
+  if (!visible) return;
+  const waiting = batch && batch.remaining > 0;
+  const selected = byId('oreChoice').value;
+  const ores = selectedOres();
+  byId('quantityLabel').hidden = selected === 'all';
+  byId('quantity').max = Math.max(1, raw[selected] || 0);
+  byId('oreChoice').disabled = !!batch;
+  byId('quantity').disabled = !!batch;
+  byId('ignite').disabled = !!batch || !ores.length;
+  byId('collect').hidden = !batch || !!waiting;
+  byId('smeltPreview').textContent = batch
+    ? (waiting ? '精錬中 ' + Math.ceil(batch.remaining) + '秒 · ' : '回収可能 · ') + formatMetals(batch.ores)
+    : ores.length ? '精錬後 ' + formatMetals(ores) : '対象の鉱石がありません。';
+}
+function refresh() {
+  const home = nearWorkshop();
+  byId('near').textContent = home ? '· 使用可能' : '· 地上の出発地点で使える';
+  byId('health').textContent = 'HP ' + player.hp + ' / 100　剣の熟練 ' + Math.min(hits, 3) + ' / 3';
+  byId('goal').textContent = won ? '赤鉄鉱を発見！ 引き続き探索できます' :
+    upgraded ? '硬い岩を掘って赤鉄鉱を見つける' : furnace ? '青銅のツルハシを作る' : equipment.size ? '坑道の作業跡で合金炉の設計図を見つける' : '木材と銅鉱石を集め、工房で剣を作る';
+  inventory('oreInventory', [...Object.entries(raw).map(([id, count]) => [materials[id], count]), ['木材', wood]]);
+  inventory('barInventory', Object.entries(bars).map(([id, count]) => [metalNames[id], count]));
+  inventory('gearInventory', [['石のツルハシ', 1], ['石の斧', 1], ...(upgraded ? [['青銅のツルハシ', 1]] : []),
+    ...Array.from(equipment, id => [names[id], 1]), ['帰還の巻物', scrolls]]);
+  byId('pick').textContent = upgraded ? '1 青銅のツルハシ' : '1 石のツルハシ';
+  byId('pick').setAttribute('aria-pressed', tool === 'pick');
+  byId('sword').setAttribute('aria-pressed', tool === 'sword');
+  byId('axe').setAttribute('aria-pressed', tool === 'axe');
+  byId('sword').disabled = !equipment.size;
+  byId('return').textContent = '帰還の巻物 ×' + scrolls;
+  byId('return').disabled = !scrolls || home;
+  refreshFurnace(home);
+  byId('craftCopper').disabled = !home || !wood || bars[COPPER] < 2 || equipment.has('copper');
+  const canAlloy = home && furnace && wood > 0 && bars[COPPER] >= 2 && bars[TIN] >= 1;
+  byId('craftBronze').disabled = !canAlloy || equipment.has('bronze');
+  byId('craftPick').disabled = !canAlloy || upgraded;
+  byId('motion').disabled = !equipment.size;
+  byId('motionInfo').textContent = swordMotions[motion].description;
+  byId('motion').options[1].disabled = hits < 3;
+  if (hits >= 3) byId('motion').options[1].textContent = '切り上げ';
+}
+function craft(kind) {
+  if (!nearWorkshop() || !wood || bars[COPPER] < 2 || equipment.has(kind) || (kind === 'pick' && upgraded)) return;
+  if (kind !== 'copper' && (!furnace || !bars[TIN])) return;
+  bars[COPPER] -= 2;
+  wood--;
+  if (kind !== 'copper') bars[TIN]--;
+  if (kind === 'pick') {
+    upgraded = true;
+    tool = 'pick';
+    show('青銅のツルハシを作った。硬い岩を掘れる。');
+  } else {
+    equipment.add(kind);
+    blade = kind;
+    tool = 'sword';
+    byId('weapon').append(new Option(names[kind], kind));
+    byId('weapon').value = blade;
+    show(names[kind] + 'を作った。坑道で試してみよう。');
+  }
+  refresh();
+}
+byId('craftCopper').onclick = () => craft('copper');
+byId('craftBronze').onclick = () => craft('bronze');
+byId('craftPick').onclick = () => craft('pick');
+byId('smelt').onclick = () => { if (nearWorkshop()) { furnaceOpen = !furnaceOpen; refresh(); } };
+byId('oreChoice').onchange = () => { byId('quantity').value = 1; refresh(); };
+byId('quantity').oninput = refresh;
+byId('ignite').onclick = () => {
+  if (!nearWorkshop() || !furnaceOpen || batch) return;
+  const ores = selectedOres();
+  if (!ores.length) return;
+  for (const [id, count] of ores) raw[id] -= count;
+  batch = {ores, remaining: Math.min(4, 1 + ores.reduce((total, [,count]) => total + count, 0) * .16)};
+  show('かまどに鉱石を入れた。');
+  refresh();
+};
+byId('collect').onclick = () => {
+  if (!nearWorkshop() || !furnaceOpen || !batch || batch.remaining > 0) return;
+  for (const [id, count] of batch.ores) bars[id] += count;
+  show(formatMetals(batch.ores) + 'を回収した。');
+  batch = null;
+  refresh();
+};
+function goHome() { Object.assign(player, {...spawn, vx: 0, vy: 0}); swing = null; activePointer = null; }
+byId('return').onclick = () => {
+  if (!scrolls || nearWorkshop()) return;
+  scrolls--;
+  goHome();
+  show('巻物を使って工房に帰還した。');
+  refresh();
+};
+function chooseTool(next) {
+  if (next === 'sword' && !equipment.size) return;
+  tool = next;
+  refresh();
+}
+byId('pick').onclick = () => chooseTool('pick');
+byId('sword').onclick = () => chooseTool('sword');
+byId('axe').onclick = () => chooseTool('axe');
+byId('weapon').onchange = event => { blade = event.target.value; chooseTool('sword'); };
+byId('motion').onchange = event => { motion = event.target.value; chooseTool('sword'); };
+window.addEventListener('keydown', event => {
+  const key = event.key.toLowerCase();
+  if (document.activeElement?.tagName === 'SELECT' || (key === ' ' && document.activeElement?.tagName === 'BUTTON')) return;
+  if (!keysForGame.includes(key)) return;
+  event.preventDefault();
+  keys.add(key);
+  if (Object.hasOwn(toolKeys,key)) chooseTool(toolKeys[key]);
+});
+window.addEventListener('keyup', event => keys.delete(event.key.toLowerCase()));
+window.addEventListener('blur', () => { keys.clear(); activePointer = null; pointerClient = null; });
+document.querySelectorAll('[data-key]').forEach(button => {
+  button.onpointerdown = event => { event.preventDefault(); button.setPointerCapture(event.pointerId); keys.add(button.dataset.key); };
+  button.onlostpointercapture = () => keys.delete(button.dataset.key);
+});
+function move(axis, amount) {
+  player[axis] += amount;
+  const l = Math.floor(player.x / TILE), r = Math.floor((player.x + player.w - .01) / TILE);
+  const t = Math.floor(player.y / TILE), b = Math.floor((player.y + player.h - .01) / TILE);
+  if (axis === 'y') player.grounded = false;
+  for (let y = t; y <= b; y++) for (let x = l; x <= r; x++) {
+    if (!amount || !tile(x, y) || player.x >= (x+1)*TILE || player.x+player.w <= x*TILE || player.y >= (y+1)*TILE || player.y+player.h <= y*TILE) continue;
+    if (axis === 'x') { player.x = amount > 0 ? x*TILE-player.w : (x+1)*TILE; player.vx = 0; }
+    else { player.y = amount > 0 ? y*TILE-player.h : (y+1)*TILE; player.vy = 0; player.grounded = amount > 0; }
+  }
+}
+function pointerWorld() {
+  if (!pointerClient) return null;
+  const r = canvas.getBoundingClientRect();
+  if (!r.width || !r.height) return null;
+  const x = (pointerClient.x-r.left)*canvas.width/r.width;
+  const y = (pointerClient.y-r.top)*canvas.height/r.height;
+  if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) return null;
+  return {x: view.x+x, y: view.y+y};
+}
+function trackPointer(event) { pointerClient = {x: event.clientX, y: event.clientY}; }
+canvas.onpointermove = trackPointer;
+canvas.onpointerenter = trackPointer;
+canvas.onpointerleave = () => { if (activePointer === null) pointerClient = null; };
+canvas.onpointerdown = event => {
+  if (event.button !== 0 || activePointer !== null) return;
+  trackPointer(event);
+  canvas.focus({preventScroll:true});
+  canvas.setPointerCapture(event.pointerId);
+  activePointer = event.pointerId;
+  act(pointerWorld());
+};
+function stopUsingTool(event) {
+  if (event.pointerId === activePointer) activePointer = null;
+}
+canvas.onpointerup = stopUsingTool;
+canvas.onpointercancel = stopUsingTool;
+canvas.onlostpointercapture = stopUsingTool;
+function treeAt(point) {
+  if (point.y < surfaceY-48 || point.y >= surfaceY) return undefined;
+  return trees.find(tree => tree.hits < 3 && point.x >= tree.x-5 && point.x <= tree.x+13);
+}
+function act(point) {
+  if (!point || swing) return;
+  const px = player.x + player.w / 2, py = player.y + 11;
+  const dx = point.x - px;
+  player.facing = dx < 0 ? -1 : 1;
+  if (tool === 'axe') {
+    const tree = treeAt(point);
+    if (!tree || Math.hypot(tree.x+4-px,point.y-py) > 55) {
+      show('木に近づいて、斧で幹をクリック。');
+      return;
+    }
+    swing = {time: 0, duration: .23, type: 'axe', direction: player.facing};
+    tree.hits++;
+    if (tree.hits === 3) {
+      wood += 3;
+      show('木を切った。木材 ×3');
+      refresh();
+    } else show('伐採 ' + tree.hits + ' / 3');
+    return;
+  }
+  if (tool === 'sword') {
+    swing = {
+      time: 0, duration: blade === 'bronze' ? .36 : .25,
+      type: motion, direction: player.facing, blade, hit: new Set(),
+      arc: swordMotions[motion]
+    };
+    return;
+  }
+  const x = Math.floor(point.x/TILE), y = Math.floor(point.y/TILE);
+  const id = tile(x,y);
+  if (x < 0 || x >= widths || y < 0 || y >= heights-1 || !id || Math.hypot((x+.5)*TILE-px,(y+.5)*TILE-py) > 68) return;
+  if (id === HARD && !upgraded) {show('硬い岩。青銅のツルハシが必要。');return;}
+  swing = {time: 0, duration: .15, type: 'pick', direction: player.facing, angle: Math.atan2(point.y-py, Math.abs(dx))};
+  const key = x + ',' + y;
+  const count = (cracks.get(key) ?? 0) + 1;
+  if (count < (id === EARTH || (upgraded && id === ROCK) ? 1 : 2)) {cracks.set(key,count);return;}
+  cracks.delete(key);
+  world[y][x] = 0;
+  if (Object.hasOwn(raw,id)) {
+    raw[id]++;
+    if (id === IRON) won = true;
+    show(materials[id] + 'を採掘した。');
+    refresh();
+  }
+}
+function swordActive() {
+  return swing?.arc && swing.time >= .025 && swing.time <= swing.duration*.8;
+}
+function swordTouches(enemy) {
+  const {start, end, reach} = swing.arc;
+  const px = player.x + 6, py = player.y + 15;
+  const pad = 3;
+  for (let angle = start; angle <= end + .001; angle += (end-start)/16) {
+    for (let distance = 3; distance <= reach; distance += 5) {
+      const x = px + Math.cos(angle)*distance*swing.direction;
+      const y = py + Math.sin(angle)*distance;
+      if (x >= enemy.x-pad && x <= enemy.x+enemy.w+pad &&
+          y >= enemy.y-pad && y <= enemy.y+enemy.h+pad) return true;
+    }
+  }
+  return false;
+}
+function advance(dt, clock) {
+  if (batch?.remaining > 0) batch.remaining = Math.max(0, batch.remaining-dt);
+  const motionX = Number(keys.has('d') || keys.has('arrowright')) - Number(keys.has('a') || keys.has('arrowleft'));
+  player.vx = motionX * 163;
+  if (motionX && !swing) player.facing = motionX;
+  if (player.grounded && (keys.has(' ') || keys.has('arrowup'))) player.vy = -370;
+  player.vy = Math.min(430, player.vy + 900*dt);
+  move('x', player.vx*dt);
+  move('y', player.vy*dt);
+  player.immunity = Math.max(0, player.immunity-dt);
+  if (!furnace && player.x > 35*MAP_UNIT && player.x < 37*MAP_UNIT && player.y > 13*MAP_UNIT) {
+    furnace = true;
+    scrolls++;
+    show('作業跡で合金炉の設計図と帰還の巻物を見つけた。工房で青銅を作れる。');
+  }
+  if (swing) swing.time += dt;
+  for (const enemy of enemies) {
+    if (enemy.hp <= 0) continue;
+    enemy.x += enemy.direction * enemy.pace * dt;
+    if (enemy.x < enemy.min*MAP_UNIT || enemy.x > enemy.max*MAP_UNIT) enemy.direction *= -1;
+    if (enemy.flies) enemy.y = 14.9*MAP_UNIT + Math.sin(clock*3)*14;
+    if (swordActive() && !swing.hit.has(enemy) && swordTouches(enemy)) {
+        swing.hit.add(enemy);
+        hits++;
+        if (enemy.shell && swing.direction !== enemy.direction) {
+          if (swing.blade === 'bronze') {enemy.shell--; show(enemy.shell ? '青銅の刃で殻にひびが入った。' : '殻を割った。次の攻撃が通る。');}
+          else show('正面の殻に弾かれた。背後を狙うか、青銅を試そう。');
+        } else {
+          enemy.hp -= swing.blade === 'bronze' ? 4 : 2;
+          enemy.flash = clock + .15;
+          show(enemy.hp <= 0 ? enemy.kind + 'を倒した。' : enemy.kind + 'に命中。');
+        }
+        if (hits === 3) show('剣の熟練が上がった。通常攻撃に切り上げを選べる。');
+    }
+    if (enemy.hp > 0 && !player.immunity && player.x < enemy.x+enemy.w && player.x+player.w > enemy.x && player.y < enemy.y+enemy.h && player.y+player.h > enemy.y) {
+      player.hp -= 10;
+      player.immunity = 1;
+      if (!player.hp) { goHome(); player.hp = 100; show('工房で目を覚ました。装備と素材は手元にある。'); break; }
+    }
+  }
+  if (swing && swing.time >= swing.duration) swing = null;
+  view = {x: Math.round(clamp(player.x-240,0,widths*TILE-canvas.width)), y: Math.round(clamp(player.y-172,0,heights*TILE-canvas.height))};
+  if (activePointer !== null && !swing) act(pointerWorld());
+}
+function rect(color,x,y,w,h) {ctx.fillStyle=color;ctx.fillRect(Math.round(x), Math.round(y),w,h);}
+function draw(clock) {
+  const sky = ctx.createLinearGradient(0,0,0,canvas.height);
+  sky.addColorStop(0,'#507f87');
+  sky.addColorStop(1,'#e2b278');
+  rect(sky,0,0,canvas.width,canvas.height);
+  ctx.save();
+  ctx.translate(-view.x,-view.y);
+  rect('#272b39',view.x,surfaceY,canvas.width,canvas.height);
+  for (let x = Math.floor(view.x/TILE); x < Math.min(widths,Math.ceil((view.x+canvas.width)/TILE)); x++) {
+    const horizon = surfaceY-36+Math.sin(x*.08)*20+Math.sin(x*.245)*7;
+    rect('#456353',x*TILE,horizon,TILE,Math.max(0,surfaceY-horizon));
+    for (let y = surfaceY/TILE; y < heights; y++) {
+      const id = world[y][x];
+      if (!id) { if ((x*3+y)%7 === 0) rect('#333747',x*TILE+2,y*TILE+5,4,1); continue; }
+      rect(id >= COPPER && id !== HARD ? '#565462' : colors[id],x*TILE,y*TILE,TILE,TILE);
+      rect('#17172255',x*TILE+(x+y)%4,y*TILE+6,4,1);
+      if (id === EARTH && y*TILE === surfaceY) rect('#819555',x*TILE,y*TILE,TILE,2);
+      if (Object.hasOwn(materials,id)) {
+        rect(colors[id],x*TILE+1,y*TILE+2,4,3);
+        rect(colors[id],x*TILE+5,y*TILE+5,3,3);
+        rect('#ffffff79',x*TILE+2,y*TILE+2,2,1);
+      }
+      if (cracks.has(x+','+y)) {rect('#272a36',x*TILE+3,y*TILE+1,1,6);rect('#272a36',x*TILE+4,y*TILE+5,3,1);}
+    }
+  }
+  for (const tree of trees) {
+    const trunk = tree.x;
+    if (tree.hits === 3) { rect('#89624a',trunk,surfaceY-6,8,6); continue; }
+    rect('#6c4d3e',trunk,surfaceY-48,8,48);
+    rect('#375847',trunk-19,surfaceY-67,47,28);
+    rect('#4c6e4d',trunk-12,surfaceY-77,32,36);
+    rect('#628051',trunk-6,surfaceY-79,17,9);
+    if (tree.hits) rect('#d7aa73',trunk, surfaceY-17, 3*tree.hits, 3);
+  }
+  rect('#594435',spawn.x-26,surfaceY-20,48,20);
+  rect('#f1a763',spawn.x-12,surfaceY-12,16,9);
+  rect('#a37147',35.4*MAP_UNIT,17*MAP_UNIT-17,19,17);
+  if (!furnace) rect('#ffd88a',35.4*MAP_UNIT+4,17*MAP_UNIT-13,11,4);
+  for (const enemy of enemies) {
+    if (enemy.hp <= 0) continue;
+    rect(clock < enemy.flash ? '#f8ca96' : enemy.shell ? '#995e53' : enemy.flies ? '#ac87bd' : '#9ab365',enemy.x,enemy.y,enemy.w,enemy.h);
+    rect('#272433',enemy.x+(enemy.direction > 0 ? enemy.w-5 : 3),enemy.y+4,3,3);
+  }
+  if (!player.immunity || Math.floor(clock*12)%2) {
+    const {x,y,facing} = player;
+    const stride = player.grounded && Math.abs(player.vx) > 1 ? Math.round(Math.sin(clock*23)*3) : 0;
+    rect('#ecab68',x+1,y,10,3);
+    rect('#ffd3a3',x+2,y+3,8,6);
+    rect('#413536',x+(facing > 0 ? 8 : 3),y+5,1,2);
+    rect('#b95f42',x+2,y+9,9,11);
+    rect('#e6a46c',x+(facing > 0 ? 10 : 0),y+11,3,9);
+    rect('#754833',x+2,y+18,9,2);
+    rect('#394050',x+2+stride,y+20,4,9);
+    rect('#485366',x+7-stride,y+20,4,9);
+    rect('#292b33',x+2+stride,y+28,5,3);
+    rect('#292b33',x+7-stride,y+28,5,3);
+  }
+  if (swing) {
+    const progress = swing.time/swing.duration;
+    const a = swing.type === 'axe' ? -1.65+progress*2.15 : swing.type === 'pick' ? swing.angle+.7-progress*1.1 :
+      swing.type === 'rise' ? swing.arc.end-progress*(swing.arc.end-swing.arc.start) :
+      swing.arc.start+progress*(swing.arc.end-swing.arc.start);
+    ctx.save();
+    ctx.translate(player.x+6,player.y+15);
+    ctx.scale(swing.direction,1);
+    if (swordActive()) {
+      const {start, end, reach} = swing.arc;
+      ctx.beginPath();
+      ctx.moveTo(0,0);
+      ctx.arc(0,0,reach,start,end);
+      ctx.closePath();
+      ctx.fillStyle = swing.arc.fill;
+      ctx.fill();
+      ctx.strokeStyle = swing.arc.color;
+      ctx.beginPath();
+      ctx.arc(0,0,reach,start,end);
+      ctx.stroke();
+    }
+    ctx.rotate(a);
+    rect('#c18555',0,-2,15,4);
+    if (swing.type === 'axe') {
+      rect('#b78354',12,-2,12,4);
+      rect('#b3bdc1',20,-7,7,13);
+    } else {
+      rect(swing.blade === 'bronze' ? '#edb572' : '#d7d7ce',12,-2,swing.type === 'pick' ? 13 : 25,4);
+      if (swing.type === 'pick') rect('#a4abb6',22,-7,6,12);
+    }
+    ctx.restore();
+  }
+  const target = pointerWorld();
+  if (target && tool === 'pick') {
+    ctx.strokeStyle = '#f6d489';
+    ctx.strokeRect(Math.floor(target.x/TILE)*TILE+.5,Math.floor(target.y/TILE)*TILE+.5,TILE-1,TILE-1);
+  }
+  if (target && tool === 'axe') {
+    const tree = treeAt(target);
+    if (tree) {
+      ctx.strokeStyle = '#f6d489';
+      ctx.strokeRect(tree.x-.5,surfaceY-48.5,9,48);
+    }
+  }
+  ctx.restore();
+  if (target) {
+    const x = Math.round(target.x-view.x), y = Math.round(target.y-view.y);
+    rect('#192329',x-3,y-1,7,3);
+    rect('#192329',x-1,y-3,3,7);
+    rect('#fff4ce',x-2,y,5,1);
+    rect('#fff4ce',x,y-2,1,5);
+  }
+}
+let previous = 0, lastHud = 0;
+function frame(now) {
+  const seconds = now/1000, dt = previous ? Math.min(.025,seconds-previous) : 0;
+  previous = seconds;
+  advance(dt,seconds);
+  if (seconds-lastHud > .12) { refresh(); lastHud = seconds; }
+  draw(seconds);
+  requestAnimationFrame(frame);
+}
+refresh();
+show('3キーで斧を選び、近くの木を切れる。右に進むと洞窟。');
+requestAnimationFrame(frame);
+</script>
+</html>
