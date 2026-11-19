@@ -283,20 +283,33 @@ function generate(seedStr, sizeKey) {
   /* 1. 世界の形：地域の配置 */
   const cx = W >> 1;
   const townW = Math.max(70, Math.round(W * .035));
-  const near = REGIONS.filter(r => r.near), river = REGIONS.find(r => r.key === 'river');
-  const tier1 = rng.shuffle(REGIONS.filter(r => r.tier === 1 && !r.near));
-  const tier2 = rng.shuffle(REGIONS.filter(r => r.tier === 2));
-  const tier3 = rng.shuffle(REGIONS.filter(r => r.tier === 3));
-  const order = [...rng.shuffle(near.filter(r => r !== river)), ...tier1, ...tier2, ...tier3];
-  const left = [], right = [];
-  const riverSide = rng.chance(.5) ? left : right;
-  riverSide.push(river);
-  for (const r of order) { (left.length <= right.length ? (rng.chance(.7) ? left : right) : (rng.chance(.7) ? right : left)).push(r); }
+  const river = REGIONS.find(r => r.key === 'river');
+  const ringOf = r => r.near ? 0 : r.tier; // 0=町のすぐ近く 1=現実寄り 2=大げさ 3=架空
   const sideWidth = Math.floor((W - townW) / 2);
-  const spans = []; // {r, x0, x1}
+  // 1区画の目安幅から、片側にいくつ地域を並べるかを決める。足りない分は同じ種類をくり返す
+  const segTarget = Math.max(60, Math.min(230, sideWidth / 10));
+  const slotsPerSide = Math.max(11, Math.round(sideWidth / segTarget));
+  const items = REGIONS.filter(r => r.tier > 0 && r !== river); // 川以外は最低1回ずつ
+  const repeatW = r => r.key === 'volcano' ? .4 : r.tier === 1 ? 1 : .8;
+  const pool = REGIONS.filter(r => r.tier > 0);
+  const poolTotal = pool.reduce((a, r) => a + repeatW(r), 0);
+  while (items.length + 1 < slotsPerSide * 2) { let t = rng.f() * poolTotal; for (const r of pool) { t -= repeatW(r); if (t <= 0) { items.push(r); break; } } }
+  const left = [], right = [], riverSide = rng.chance(.5) ? left : right, otherSide = riverSide === left ? right : left;
+  riverSide.push(river);
+  for (let ring = 0; ring <= 3; ring++) {
+    const ringItems = rng.shuffle(items.filter(r => ringOf(r) === ring));
+    let turn = rng.chance(.5);
+    for (const r of ringItems) { (turn ? left : right).push(r); turn = !turn; }
+  }
+  // 同じ地域がとなり合わないように並べ替える
+  for (const list of [left, right]) for (let i = 1; i < list.length; i++) if (list[i] === list[i - 1]) {
+    const j = list.findIndex((r, k) => k > i && ringOf(r) === ringOf(list[i]) && r !== list[i] && r !== list[i - 1]);
+    if (j > 0) [list[i], list[j]] = [list[j], list[i]];
+  }
+  let spans = []; // {r, x0, x1}
   spans.push({r: REGIONS[0], x0: cx - (townW >> 1), x1: cx - (townW >> 1) + townW});
   const layoutSide = (list, dir) => {
-    const weights = list.map(() => rng.range(.75, 1.3)), total = weights.reduce((a, b) => a + b, 0);
+    const weights = list.map(() => rng.range(.7, 1.3)), total = weights.reduce((a, b) => a + b, 0);
     let pos = dir < 0 ? cx - (townW >> 1) : cx - (townW >> 1) + townW;
     list.forEach((r, i) => {
       const w = Math.max(30, Math.round(sideWidth * weights[i] / total));
@@ -306,6 +319,18 @@ function generate(seedStr, sizeKey) {
     if (dir < 0) spans[spans.length - 1].x0 = 0; else spans[spans.length - 1].x1 = W;
   };
   layoutSide(left, -1); layoutSide(right, 1);
+  // 小さいバイオーム：大きい地域の中に、別の地域を小さく差し込む（遠いほど架空のルールは守る）
+  const PATCHES = [['swamp', 1], ['saltlake', 1], ['geothermal', 1], ['limestone', 1], ['forest', 1], ['crystalwaste', 2], ['glowfog', 3], ['ashplain', 3]];
+  const patchCount = Math.round(W / 220);
+  for (let k = 0; k < patchCount; k++) {
+    const [key, minTier] = rng.pick(PATCHES), pr = REGIONS.find(r => r.key === key), pw = rng.int(26, 50);
+    const hosts = spans.filter(h => h.r.tier >= minTier && h.r.tier > 0 && h.r !== pr && h.r !== river && !h.patch && h.x1 - h.x0 >= pw + 40);
+    if (!hosts.length) continue;
+    const h = rng.pick(hosts), px0 = rng.int(h.x0 + 20, h.x1 - pw - 20);
+    spans = spans.filter(q => q !== h);
+    spans.push({r: h.r, x0: h.x0, x1: px0}, {r: pr, x0: px0, x1: px0 + pw, patch: true}, {r: h.r, x0: px0 + pw, x1: h.x1});
+  }
+  spans.sort((a, b) => a.x0 - b.x0);
   for (const s of spans) for (let x = s.x0; x < s.x1; x++) regionOf[x] = REGIONS.indexOf(s.r);
   const spanOf = key => spans.find(s => s.r.key === key);
 
@@ -321,12 +346,10 @@ function generate(seedStr, sizeKey) {
   const town = spanOf('town'); let tAvg = 0; for (let x = town.x0; x < town.x1; x++) tAvg += surf[x]; tAvg = Math.round(tAvg / (town.x1 - town.x0));
   for (let x = town.x0; x < town.x1; x++) surf[x] = tAvg;
   // 火山：円錐
-  const vol = spanOf('volcano');
-  if (vol) { const vc = (vol.x0 + vol.x1) >> 1, vw = (vol.x1 - vol.x0) * .45, vh = H * .09;
+  for (const vol of spans.filter(q => q.r.key === 'volcano')) { const vc = (vol.x0 + vol.x1) >> 1, vw = (vol.x1 - vol.x0) * .45, vh = H * .09;
     for (let x = vol.x0; x < vol.x1; x++) { const d = Math.abs(x - vc) / vw; if (d < 1) surf[x] -= Math.round(vh * (1 - d) * (d < .12 ? .7 : 1)); } }
   // 逆さ滝の谷：深い谷
-  const rev = spanOf('revfalls');
-  if (rev) { const vc = (rev.x0 + rev.x1) >> 1, vw = (rev.x1 - rev.x0) * .3;
+  for (const rev of spans.filter(q => q.r.key === 'revfalls')) { const vc = (rev.x0 + rev.x1) >> 1, vw = (rev.x1 - rev.x0) * .3;
     for (let x = rev.x0; x < rev.x1; x++) { const d = Math.abs(x - vc) / vw; if (d < 1) surf[x] += Math.round(H * .07 * Math.min(1, (1 - d) * 3)); } }
   for (let x = 0; x < W; x++) surf[x] = Math.max(skyH + 20, Math.min(H * .4, surf[x]));
   lap('地形');
@@ -340,10 +363,13 @@ function generate(seedStr, sizeKey) {
   }
   for (let x = 0; x < W; x++) for (let k = 2; k <= 7; k++) if (bounds[k][x] <= surf[x] + 6) bounds[k][x] = surf[x] + 6 + k;
   const shaleN = makeNoise1D(rng, 60, 2);
+  // 石灰岩・玄武岩の置き換えは、地域の端から離れるほど深くまで（縦にまっすぐな境目にしない）
+  const edgeDist = new Float32Array(W);
+  for (const sp of spans) for (let x = sp.x0; x < sp.x1; x++) edgeDist[x] = Math.min(x - sp.x0, sp.x1 - 1 - x);
   for (let x = 0; x < W; x++) {
     const r = REGIONS[regionOf[x]], top = B[r.top], sub = (r.top === 'GRASS') ? B.DIRT : top, s0 = surf[x];
     const b2 = bounds[2][x], b3 = bounds[3][x], b4 = bounds[4][x], b5 = bounds[5][x], b6 = bounds[6][x], b7 = bounds[7][x];
-    const lime = r.key === 'limestone', basalt = r.key === 'volcano', shOff = shaleN(x) * 8;
+    const limeR = r.key === 'limestone', basaltR = r.key === 'volcano', shOff = shaleN(x) * 8, reach = Math.min(1, edgeDist[x] / 18);
     for (let y = 0; y < H; y++) {
       const i = y * W + x;
       if (y < s0) { blocks[i] = 0; layer[i] = 0; continue; }
@@ -353,8 +379,9 @@ function generate(seedStr, sizeKey) {
       let id;
       if (d === 0) id = top;
       else if (d < r.topDepth) id = sub;
-      else if (s === 1) id = lime ? B.LIMESTONE : basalt ? B.BASALT : (valueNoise2D(seedNum, x, y, 14) > .68 ? B.GRAVEL : B.SHALLOW);
-      else if (s === 2) id = lime ? B.LIMESTONE : ((((y + shOff) % 23) + 23) % 23 < 4 ? B.SHALE : B.SEDROCK);
+      else if (s <= 2 && (limeR || basaltR) && reach * (H * .16) + valueNoise2D(seedNum + 5, x, y, 9) * 14 > d) id = limeR ? B.LIMESTONE : B.BASALT;
+      else if (s === 1) id = valueNoise2D(seedNum, x, y, 14) > .68 ? B.GRAVEL : B.SHALLOW;
+      else if (s === 2) id = (((y + shOff) % 23) + 23) % 23 < 4 ? B.SHALE : B.SEDROCK;
       else id = [0, 0, 0, B.VEINROCK, B.PEGMATITE, B.GRANITE, B.ANOMROCK, B.ABYSSROCK][s];
       blocks[i] = id;
     }
@@ -506,8 +533,7 @@ function generate(seedStr, sizeKey) {
   const caveSpec = {1: [6, 1, 2, .55], 2: [6, 1, 2.6, .5], 3: [4, 1, 2, .7], 4: [3, 1, 2, .6], 5: [2, 1, 2, .6], 6: [7, 2, 4, .6], 7: [7, 2.5, 5, .5]};
   for (let s = 1; s <= 7; s++) { const [dens, r0, r1, flat] = caveSpec[s], count = Math.round(dens * strataArea(s) / 100000);
     for (let k = 0; k < count; k++) { const x = rng.int(0, W - 1); worm(x, yInStrata(x, s), rng.int(40, 200), r0, r1, flat); } }
-  const lime = spanOf('limestone');
-  if (lime) for (let k = 0; k < (lime.x1 - lime.x0) / 15; k++) { const x = rng.int(lime.x0, lime.x1 - 1); worm(x, surf[x] + rng.int(8, 60), rng.int(60, 160), 2, 4, .4); }
+  for (const lime of spans.filter(q => q.r.key === 'limestone')) for (let k = 0; k < (lime.x1 - lime.x0) / 15; k++) { const x = rng.int(lime.x0, lime.x1 - 1); worm(x, surf[x] + rng.int(8, 60), rng.int(60, 160), 2, 4, .4); }
   // 洞窟の入口
   for (let k = 0; k < W / 220; k++) { const x = rng.int(0, W - 1); if (Math.abs(x - cx) < townW) continue; let px = x, py = surf[x] + 1; const ang0 = Math.PI / 2 + rng.range(-.6, .6); let ang = ang0;
     for (let j = 0; j < rng.int(25, 70); j++) { ang += rng.range(-.2, .2); px += Math.cos(ang); py += Math.sin(ang); stampEllipse(px, py, 1.6, 1.4, (qx, qy) => { const i = idx(qx, qy); if (!protectedBlk[blocks[i]]) blocks[i] = 0; }); } }
@@ -571,11 +597,19 @@ function generate(seedStr, sizeKey) {
   for (let k = 0; k < Math.max(2, Math.round(2 * scale)); k++) { const x = Math.round(cx + (k % 2 ? 1 : -1) * W * rng.range(.1, .4)), s = rng.chance(.5) ? 2 : 3, y = yInStrata(x, s), rw = rng.int(9, 14), rh = rng.int(5, 7);
     for (let py = y - rh; py <= y; py++) for (let px = x; px <= x + rw; px++) set(px, py, (py === y - rh || py === y || px === x || px === x + rw) ? B.FORGE : 0);
     features.push({kind: 'forge', x: x + (rw >> 1), y: y - (rh >> 1), r: 8}); }
-  // 浮島：遠い地域の上空
-  for (const s of spans) { if (s.r.tier < 2) continue; const cnt = s.r.tier === 3 ? 3 : 1;
-    for (let k = 0; k < cnt; k++) { const x = rng.int(s.x0 + 10, s.x1 - 10), y = rng.int(Math.round(skyH * .4), Math.round(skyH * 1.1)), rx = rng.int(10, 22), ry = rng.int(4, 7);
+  // 浮島：遠い地域の上空。ほかの浮島や地表と重ならないように間隔を空ける
+  const islands = [];
+  for (const s of spans) { if (s.r.tier < 2) continue; const w = s.x1 - s.x0; const cnt = s.r.tier === 3 ? Math.max(1, Math.round(w / 110)) : (rng.chance(.6) ? 1 : 0);
+    for (let k = 0; k < cnt; k++) for (let tries = 0; tries < 15; tries++) {
+      const rx = rng.int(9, 20), ry = rng.int(3, 6); if (w < rx * 2 + 6) break;
+      const x = rng.int(s.x0 + rx, s.x1 - rx), y = rng.int(Math.round(skyH * .3), Math.round(skyH * 1.15));
+      let minSurf = H; for (let qx = x - rx; qx <= x + rx; qx++) if (qx >= 0 && qx < W) minSurf = Math.min(minSurf, surf[qx]);
+      if (y + ry > minSurf - 14) continue;
+      if (islands.some(o => Math.abs(o.x - x) < o.rx + rx + 10 && Math.abs(o.y - y) < o.ry + ry + 8)) continue;
+      islands.push({x, y, rx, ry});
       stampEllipse(x, y, rx, ry, (px, py) => { if (py < y) return; const i = idx(px, py); if (blocks[i] !== 0) return; blocks[i] = py === y ? B.GRASS : cellHash(seedNum + 11, px, py) < .25 ? B.FLOATORE : B.DIRT; layer[i] = 8; });
-      features.push({kind: 'islands', x, y, r: rx}); } }
+      features.push({kind: 'islands', x, y, r: rx}); break;
+    } }
   lap('施設');
 
   /* 7. 液体：地底湖と最深部の溶岩 */
