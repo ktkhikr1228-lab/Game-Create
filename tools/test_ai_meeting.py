@@ -219,3 +219,49 @@ class MeetingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeRoute:
+    def __init__(self, base, key, header="", interval=15, key_name="AI_API_KEY"):
+        self.base, self.key, self.key_name, self.calls, self.checked = base, key, key_name, [], False
+
+    def check(self):
+        self.checked = True
+
+    def chat(self, model, system, user):
+        self.calls.append(model)
+        return f"{self.base}:{model}"
+
+
+class RouterTest(unittest.TestCase):
+    def test_split_model(self):
+        self.assertEqual(m.split_model("gemini:gemini-4-neon"), ("gemini", "gemini-4-neon"))
+        self.assertEqual(m.split_model("claude-opus-5.5"), ("", "claude-opus-5.5"))
+        self.assertEqual(m.split_model("unknown:model"), ("", "unknown:model"))   # 知らない会社名はゲートウェイへ
+
+    def test_routes_to_gateway_and_official_api(self):
+        env = {"AI_API_BASE": "https://gw/v1", "AI_API_KEY": "k", "GEMINI_API_KEY": "g"}
+        parts = m.parse_models("Claude=claude-opus-5.5,Gemini=gemini:gemini-4-neon")
+        router = m.Router(env, parts, make=FakeRoute)
+        self.assertEqual(router.chat("claude-opus-5.5", "s", "u"), "https://gw/v1:claude-opus-5.5")
+        self.assertEqual(router.chat("gemini:gemini-4-neon", "s", "u"),
+                         "https://generativelanguage.googleapis.com/v1beta/openai:gemini-4-neon")
+        self.assertEqual(router.routes["gemini"].key_name, "GEMINI_API_KEY")
+
+    def test_gateway_not_needed_when_every_model_is_official(self):
+        env = {"GEMINI_API_KEY": "g", "MISTRAL_API_KEY": "x"}
+        router = m.Router(env, m.parse_models("Gemini=gemini:gemini-4-neon,Mistral=mistral:mistral-large-latest"), make=FakeRoute)
+        self.assertNotIn("", router.routes)
+
+    def test_missing_official_key_stops_before_the_meeting(self):
+        with self.assertRaises(m.MeetingError) as ctx:
+            m.Router({"AI_API_BASE": "https://gw/v1", "AI_API_KEY": "k"},
+                     m.parse_models("Claude=claude-opus-5.5,Gemini=gemini:gemini-4-neon"), make=FakeRoute)
+        self.assertIn("GEMINI_API_KEY", str(ctx.exception))
+
+    def test_anthropic_skips_the_models_check(self):
+        env = {"ANTHROPIC_API_KEY": "a", "GEMINI_API_KEY": "g"}
+        router = m.Router(env, m.parse_models("Claude=anthropic:claude-opus-5-5,Gemini=gemini:gemini-4-neon"), make=FakeRoute)
+        router.check()
+        self.assertFalse(router.routes["anthropic"].checked)
+        self.assertTrue(router.routes["gemini"].checked)

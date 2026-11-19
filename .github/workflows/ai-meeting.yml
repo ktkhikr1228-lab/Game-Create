@@ -4,7 +4,9 @@ name: AI会議
 # 手動実行できるのはリポジトリに書き込める人だけなので、外部の人が勝手に動かすことはできない。
 #
 # 事前の設定(リポジトリの Settings → Secrets and variables → Actions):
-#   Secrets   : AI_API_BASE(OpenAI互換APIの入口。…/v1 まで)、AI_API_KEY(APIキー)
+#   Secrets   : AI_API_BASE(ゲートウェイ=OpenAI互換APIの入口。…/v1 まで)、AI_API_KEY(ゲートウェイのAPIキー)
+#               公式APIを直接使うモデルがあれば、その会社のキーも: GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / MISTRAL_API_KEY
+#               (AI_MODELS でモデルIDの前に「gemini:」などを付けたモデルが、そのキーで公式APIを使う)
 #   Variables : AI_KEY_HEADER(キーを渡すヘッダー名。Authorization 以外のときだけ)
 #               AI_MODELS(任意。「表示名=モデルID」をカンマ区切り。省略時は Claude / GPT / Gemini の3つ)
 #               AI_CALL_INTERVAL(任意。呼び出しの間に空ける秒数。既定15。混雑で失敗が多いときに増やす)
@@ -55,6 +57,10 @@ jobs:
           AI_API_BASE: ${{ secrets.AI_API_BASE }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_KEY_HEADER: ${{ vars.AI_KEY_HEADER }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           AI_MODELS: ${{ vars.AI_MODELS }}
           AI_CALL_INTERVAL: ${{ vars.AI_CALL_INTERVAL }}
           # 入力は環境変数で渡す(スクリプトに直接埋め込まない)

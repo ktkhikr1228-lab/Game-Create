@@ -7,10 +7,15 @@
 
 使うもの(すべて環境変数):
   GITHUB_TOKEN, GITHUB_REPOSITORY            … GitHub Actions が自動で渡す
-  AI_API_BASE                                 … OpenAI互換APIの入口(…/v1 まで)。Secrets に登録
-  AI_API_KEY                                  … APIキー。Secrets に登録
+  AI_API_BASE                                 … ゲートウェイ(OpenAI互換API)の入口(…/v1 まで)。Secrets に登録
+  AI_API_KEY                                  … ゲートウェイのAPIキー。Secrets に登録
   AI_KEY_HEADER                               … キーを渡すヘッダー名(既定 Authorization。専用ヘッダーのゲートウェイならその名前)
   AI_MODELS                                   … 「表示名=モデルID」をカンマ区切り(既定は下の DEFAULT_MODELS)
+                                                モデルIDの前に「gemini:」「openai:」「anthropic:」「mistral:」を付けると、
+                                                ゲートウェイを通さず、その会社の公式APIを直接使う(例: Gemini=gemini:gemini-4-neon)
+  GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / MISTRAL_API_KEY
+                                              … 公式APIを直接使うときのキー。使う会社のぶんだけ Secrets に登録
+                                                (ゲートウェイを使うモデルがなければ、AI_API_BASE / AI_API_KEY は不要)
   AI_CALL_INTERVAL                            … 呼び出しの間に空ける秒数(既定15。混雑しやすいゲートウェイ向け)
   MEETING_TOPIC / MEETING_ISSUE / MEETING_ROUNDS … 手動実行のときの入力
 Python標準ライブラリだけで動く。
@@ -37,6 +42,13 @@ RETRY_WAITS = (20, 40, 80, 120)   # 混雑・時間切れのときのやり直�
 RETRYABLE = {408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524, 529}
 FAILED_MARKERS = ("(応答できませんでした", "(まとめを作れませんでした")   # 以前の版が書いた失敗のコメント
 FOOTER = "\n\n---\n<sub>AI会議の自動投稿です。決定はオーナーが行います。</sub>"
+# 公式APIの入口(どれもOpenAI互換の /chat/completions を持つ)。check=False は /models の確認を飛ばす
+PROVIDERS = {
+    "gemini": {"base": "https://generativelanguage.googleapis.com/v1beta/openai", "key": "GEMINI_API_KEY", "check": True},
+    "openai": {"base": "https://api.openai.com/v1", "key": "OPENAI_API_KEY", "check": True},
+    "anthropic": {"base": "https://api.anthropic.com/v1", "key": "ANTHROPIC_API_KEY", "check": False},
+    "mistral": {"base": "https://api.mistral.ai/v1", "key": "MISTRAL_API_KEY", "check": True},
+}
 
 
 class MeetingError(RuntimeError):
@@ -56,6 +68,14 @@ def parse_models(text: str) -> list[tuple[str, str]]:
     if not 2 <= len(models) <= 5:
         raise MeetingError("参加モデルは2〜5個にしてください")
     return models
+
+
+def split_model(spec: str) -> tuple[str, str]:
+    """「gemini:gemini-4-neon」→ ("gemini", "gemini-4-neon")。会社名がなければゲートウェイ("", モデルID)。"""
+    provider, sep, model = spec.partition(":")
+    if sep and provider.strip().lower() in PROVIDERS and model.strip():
+        return provider.strip().lower(), model.strip()
+    return "", spec.strip()
 
 
 def parse_rounds(text: str) -> int:
@@ -163,11 +183,12 @@ class GitHub:
 
 class Models:
     def __init__(self, base: str, key: str, header: str = "Authorization", opener=urllib.request.urlopen, sleep=time.sleep,
-                 interval: float = 15, clock=time.monotonic):
+                 interval: float = 15, clock=time.monotonic, key_name: str = "AI_API_KEY"):
         if not base or not key:
             raise MeetingError("AI_API_BASE と AI_API_KEY を、リポジトリの Secrets に登録してください")
         if any(c.isspace() or ord(c) < 32 for c in key):
-            raise MeetingError("AI_API_KEY に改行や空白が混ざっています(キー1行だけにしてください)")
+            raise MeetingError(f"{key_name} に改行や空白が混ざっています(キー1行だけにしてください)")
+        self.key_name = key_name
         self.base, self.opener, self.sleep, self.clock = base.rstrip("/"), opener, sleep, clock
         self.interval = max(0.0, interval)
         self._last_call: float | None = None
@@ -183,7 +204,7 @@ class Models:
                 response.read()
         except urllib.error.HTTPError as error:
             if error.code in (401, 403):
-                raise MeetingError(f"APIキーが受け付けられませんでした(HTTP {error.code})。AI_API_KEY と AI_KEY_HEADER を確認してください") from error
+                raise MeetingError(f"APIキーが受け付けられませんでした(HTTP {error.code})。{self.key_name} を確認してください") from error
             # /models に対応していない入口もあるので、それ以外は会議の中で確かめる
         except (urllib.error.URLError, TimeoutError, OSError) as error:
             raise MeetingError(f"AI_API_BASE に接続できません({type(error).__name__})") from error
@@ -227,6 +248,39 @@ class Models:
                     wait = max(wait, min(int(retry_after), 300))
                 self.sleep(wait)
         raise MeetingError(last)
+
+
+class Router:
+    """モデルごとに、ゲートウェイか公式APIのどちらに送るかを振り分ける(chat と check は Models と同じ形)。"""
+
+    def __init__(self, env: dict, participants: list[tuple[str, str]], interval: float = 15, make=Models):
+        self.routes: dict[str, Models] = {}
+        missing = []
+        for _, spec in participants:
+            provider, _ = split_model(spec)
+            if provider in self.routes:
+                continue
+            if provider:
+                info = PROVIDERS[provider]
+                key = env.get(info["key"], "")
+                if not key:
+                    missing.append(info["key"])
+                    continue
+                self.routes[provider] = make(info["base"], key, "Authorization", interval=interval, key_name=info["key"])
+            else:
+                self.routes[""] = make(env.get("AI_API_BASE", ""), env.get("AI_API_KEY", ""), env.get("AI_KEY_HEADER", ""),
+                                       interval=interval)
+        if missing:
+            raise MeetingError(f"公式APIのキーが Secrets にありません: {'、'.join(sorted(set(missing)))}")
+
+    def check(self) -> None:
+        for provider, route in self.routes.items():
+            if not provider or PROVIDERS[provider]["check"]:
+                route.check()
+
+    def chat(self, spec: str, system: str, user: str) -> str:
+        provider, model = split_model(spec)
+        return self.routes[provider].chat(model, system, user)
 
 
 # ---------- 会議 ----------
@@ -362,7 +416,7 @@ def main() -> int:
             interval = float(env.get("AI_CALL_INTERVAL") or 15)
         except ValueError:
             interval = 15
-        models = Models(env.get("AI_API_BASE", ""), env.get("AI_API_KEY", ""), env.get("AI_KEY_HEADER", ""), interval=interval)
+        models = Router(env, parse_models(env.get("AI_MODELS", "")), interval=interval)
         models.check()
         run(env, github, models)
         return 0
