@@ -290,8 +290,9 @@ function generate(seedStr, sizeKey) {
   const segTarget = Math.max(60, Math.min(230, sideWidth / 10));
   const slotsPerSide = Math.max(11, Math.round(sideWidth / segTarget));
   const items = REGIONS.filter(r => r.tier > 0 && r !== river); // 川以外は最低1回ずつ
-  const repeatW = r => r.key === 'volcano' ? .4 : r.tier === 1 ? 1 : .8;
-  const pool = REGIONS.filter(r => r.tier > 0);
+  const UNIQUE = new Set(['volcano', 'revfalls']); // 世界に1つしか出ない地域
+  const repeatW = r => r.tier === 1 ? 1 : .8;
+  const pool = REGIONS.filter(r => r.tier > 0 && !UNIQUE.has(r.key));
   const poolTotal = pool.reduce((a, r) => a + repeatW(r), 0);
   while (items.length + 1 < slotsPerSide * 2) { let t = rng.f() * poolTotal; for (const r of pool) { t -= repeatW(r); if (t <= 0) { items.push(r); break; } } }
   const left = [], right = [], riverSide = rng.chance(.5) ? left : right, otherSide = riverSide === left ? right : left;
@@ -324,7 +325,7 @@ function generate(seedStr, sizeKey) {
   const patchCount = Math.round(W / 220);
   for (let k = 0; k < patchCount; k++) {
     const [key, minTier] = rng.pick(PATCHES), pr = REGIONS.find(r => r.key === key), pw = rng.int(26, 50);
-    const hosts = spans.filter(h => h.r.tier >= minTier && h.r.tier > 0 && h.r !== pr && h.r !== river && !h.patch && h.x1 - h.x0 >= pw + 40);
+    const hosts = spans.filter(h => h.r.tier >= minTier && h.r.tier > 0 && h.r !== pr && h.r !== river && !UNIQUE.has(h.r.key) && !h.patch && h.x1 - h.x0 >= pw + 40);
     if (!hosts.length) continue;
     const h = rng.pick(hosts), px0 = rng.int(h.x0 + 20, h.x1 - pw - 20);
     spans = spans.filter(q => q !== h);
@@ -574,9 +575,10 @@ function generate(seedStr, sizeKey) {
     for (let h = 0; h < 3; h++) set(dir < 0 ? shaftX - 1 : shaftX + 2, ay - h, 0); // 竪坑の壁に横坑の口を開ける
     for (let j = 1; j < len; j++) { const x = dir < 0 ? shaftX - j : shaftX + 1 + j; for (let h = 0; h < 3; h++) { const i = idx(x, ay - h); if (!protectedBlk[blocks[i]] || blocks[i] === B.WATER) blocks[i] = 0; } set(x, ay + 1, j % 7 === 0 ? B.TIMBER : (isSolid[get(x, ay + 1)] ? get(x, ay + 1) : B.TIMBER)); if (j % 7 === 0) { set(x, ay - 3, B.TIMBER); } } }
   // 序盤の鉱石は、町の横坑の壁に必ず顔を出させる（大きい世界でも最初の銅に迷わないように）
+  let oreTurn = 0;
   for (const ay of adits.slice(0, 2)) for (let k = 0; k < 3; k++) {
-    const x = shaftX + (rng.chance(.5) ? -1 : 1) * rng.int(8, 36), y = rng.chance(.5) ? ay - 3 - rng.int(0, 1) : ay + 2;
-    const ore = k % 2 ? B.MALACHITE : B.NATIVECU;
+    const x = shaftX + (rng.chance(.5) ? -1 : 1) * rng.int(8, 36), y = rng.chance(.5) ? ay - 3 : ay + 2;
+    const ore = (oreTurn++) % 2 ? B.MALACHITE : B.NATIVECU;
     stampEllipse(x, y, rng.int(1, 2) + .5, 1.2, (px, py) => { if (isRock[get(px, py)]) set(px, py, ore); });
   }
   features.push({kind: 'town', x: cx, y: tAvg - 4, r: townW / 2});
