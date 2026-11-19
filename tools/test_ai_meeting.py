@@ -112,15 +112,92 @@ class MeetingTests(unittest.TestCase):
         self.run_meeting(gh2, FakeModels(), MEETING_ISSUE="#9", MEETING_ROUNDS="1")
         self.assertEqual({n for n, _ in gh2.posted}, {9})
 
-    def test_one_failing_model_does_not_stop_the_meeting(self):
+    def test_one_failing_model_is_skipped_quietly(self):
         gh = FakeGitHub()
-        self.run_meeting(gh, FakeModels(fail={"g"}), MEETING_TOPIC="x", MEETING_ROUNDS="1")
-        self.assertTrue(any("応答できませんでした: HTTP 503" in b for _, b in gh.posted))
-        self.assertTrue(gh.posted[-1][1].startswith("## 📝 まとめ"))
+        result = self.run_meeting(gh, FakeModels(fail={"g"}), MEETING_TOPIC="x", MEETING_ROUNDS="2")
+        self.assertFalse(any("応答できませんでした" in b for _, b in gh.posted))       # 失敗はコメントにしない
+        self.assertEqual(len(gh.posted), 5)                                              # 2モデル×2周+まとめ
+        self.assertIn("参加できなかった回: GPT(1周目)、GPT(2周目)", gh.posted[-1][1])     # まとめに1行だけ残す
+        self.assertEqual(result["skipped"], ["GPT(1周目)", "GPT(2周目)"])
 
-    def test_all_models_failing_stops_after_the_first_round(self):
+    def test_too_few_answers_in_the_first_round_creates_no_issue(self):
+        for fail in ({"c", "g", "ge"}, {"c", "g"}):
+            gh = FakeGitHub()
+            with self.assertRaises(m.MeetingError):
+                self.run_meeting(gh, FakeModels(fail=fail), MEETING_TOPIC="x")
+            self.assertEqual((gh.created, gh.posted), ([], []))
+
+    def test_summary_falls_back_to_the_next_model(self):
+        class SummaryFails(FakeModels):
+            def chat(self, model, system, user):
+                if "まとめ役" in system and model == "c":
+                    raise m.MeetingError("HTTP 429")
+                return super().chat(model, system, user)
+        gh = FakeGitHub()
+        self.run_meeting(gh, SummaryFails(), MEETING_TOPIC="x", MEETING_ROUNDS="1")
+        self.assertTrue(gh.posted[-1][1].startswith("## 📝 まとめ(GPT)"))
+
+    def test_old_failure_comments_are_left_out_of_the_discussion(self):
+        gh = FakeGitHub([{"number": 13, "title": "前回", "body": "", "labels": [], "state": "open"}])
+        gh.posted.append((13, "### 🤖 Claude・1周目\n\n(応答できませんでした: HTTP 429)"))
+        models = FakeModels()
+        self.run_meeting(gh, models, MEETING_ISSUE="13", MEETING_ROUNDS="1")
+        self.assertNotIn("応答できませんでした", models.calls[0][2])
+
+    def test_models_retry_with_long_waits_and_respect_retry_after(self):
+        import io
+        import json as _json
+        import urllib.error
+        waits, attempts = [], []
+
+        class Ok:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return _json.dumps({"choices": [{"message": {"content": "意見"}}]}).encode()
+
+        def opener(request, timeout):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise urllib.error.HTTPError(request.full_url, 429, "busy", {"Retry-After": "90"}, io.BytesIO(b""))
+            if len(attempts) == 2:
+                raise urllib.error.HTTPError(request.full_url, 520, "x", {}, io.BytesIO(b""))
+            return Ok()
+        models = m.Models("https://x/v1", "k", opener=opener, sleep=waits.append, interval=0)
+        self.assertEqual(models.chat("m", "s", "u"), "意見")
+        self.assertEqual(waits, [90, 40])        # 1回目は Retry-After(90秒)、2回目は既定の40秒
+
+        def always_busy(request, timeout):
+            raise urllib.error.HTTPError(request.full_url, 429, "busy", {}, io.BytesIO(b""))
+        waits.clear()
         with self.assertRaises(m.MeetingError):
-            self.run_meeting(FakeGitHub(), FakeModels(fail={"c", "g", "ge"}), MEETING_TOPIC="x")
+            m.Models("https://x/v1", "k", opener=always_busy, sleep=waits.append, interval=0).chat("m", "s", "u")
+        self.assertEqual(waits, list(m.RETRY_WAITS))
+
+        def unauthorized(request, timeout):
+            raise urllib.error.HTTPError(request.full_url, 401, "no", {}, io.BytesIO(b"secret-part"))
+        waits.clear()
+        with self.assertRaises(m.MeetingError) as caught:
+            m.Models("https://x/v1", "k", opener=unauthorized, sleep=waits.append, interval=0).chat("m", "s", "u")
+        self.assertEqual((waits, str(caught.exception)), ([], "HTTP 401"))   # やり直さず、本文も残さない
+
+    def test_calls_are_spaced_out(self):
+        import json as _json
+        now = [0.0]
+        waits = []
+
+        class Ok:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return _json.dumps({"choices": [{"message": {"content": "x"}}]}).encode()
+
+        def sleep(s):
+            waits.append(round(s, 1))
+            now[0] += s
+        models = m.Models("https://x/v1", "k", opener=lambda r, timeout: Ok(), sleep=sleep, interval=15, clock=lambda: now[0])
+        models.chat("m", "s", "u")
+        now[0] += 5
+        models.chat("m", "s", "u")
+        self.assertEqual(waits, [10.0])           # 前の呼び出しから15秒あくまで待つ
 
     def test_nothing_left_to_discuss(self):
         titles = ["物語の濃さ(ほぼ説明なしか)", "柄は消耗品か、壊れない付け替え式か", "武器種の数"]

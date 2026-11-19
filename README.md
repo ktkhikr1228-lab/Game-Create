@@ -37,10 +37,14 @@ Settings → Secrets and variables → Actions で登録する。
 | Secret | `AI_API_KEY` | APIキー |
 | Variable | `AI_KEY_HEADER` | キーを渡すヘッダー名(`Authorization` 以外のときだけ) |
 | Variable | `AI_MODELS` | 任意。`表示名=モデルID` をカンマ区切り(省略時は Claude / GPT / Gemini) |
+| Variable | `AI_CALL_INTERVAL` | 任意。呼び出しの間に空ける秒数(既定15)。混雑で参加できないモデルが多いときに増やす |
 
 - 仕組み：`.github/workflows/ai-meeting.yml` と `tools/ai_meeting.py`(Python標準ライブラリだけ)
 - AIはIssueにコメントするだけで、ファイルは変更しない(ワークフローの権限も読み取りのみ)
 - キーが受け付けられないときは、Issueを作らずに止まる
+- 混雑(429)や時間切れ(504など)のときは、20〜120秒あけて最大4回までやり直す
+- それでも答えられなかったモデルは飛ばし、まとめに「参加できなかった回」として1行だけ残す(失敗のコメントは書かない)
+- 1周目に答えられたモデルが2つ未満なら、Issueを作らずに止まる。少し時間をおいて開き直す
 
 ## セットアップ
 ### Claude（@claude）

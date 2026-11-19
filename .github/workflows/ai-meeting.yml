@@ -7,6 +7,7 @@ name: AI会議
 #   Secrets   : AI_API_BASE(OpenAI互換APIの入口。…/v1 まで)、AI_API_KEY(APIキー)
 #   Variables : AI_KEY_HEADER(キーを渡すヘッダー名。Authorization 以外のときだけ)
 #               AI_MODELS(任意。「表示名=モデルID」をカンマ区切り。省略時は Claude / GPT / Gemini の3つ)
+#               AI_CALL_INTERVAL(任意。呼び出しの間に空ける秒数。既定15。混雑で失敗が多いときに増やす)
 #
 # AIはIssueにコメントするだけで、ファイルは変更しない(permissions も contents: read)。
 
@@ -37,7 +38,7 @@ permissions:
 jobs:
   meeting:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60   # 混雑時は、やり直しの待ち時間で長くなる
     steps:
       - uses: actions/checkout@v4
 
@@ -55,6 +56,7 @@ jobs:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_KEY_HEADER: ${{ vars.AI_KEY_HEADER }}
           AI_MODELS: ${{ vars.AI_MODELS }}
+          AI_CALL_INTERVAL: ${{ vars.AI_CALL_INTERVAL }}
           # 入力は環境変数で渡す(スクリプトに直接埋め込まない)
           MEETING_TOPIC: ${{ inputs.topic }}
           MEETING_ISSUE: ${{ inputs.issue }}
