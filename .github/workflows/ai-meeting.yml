@@ -1,0 +1,62 @@
+name: AI会議
+
+# AI同士の会議をIssue上で開く。オーナーが Actions タブの「Run workflow」で開いたときだけ動く(自動では動かない)。
+# 手動実行できるのはリポジトリに書き込める人だけなので、外部の人が勝手に動かすことはできない。
+#
+# 事前の設定(リポジトリの Settings → Secrets and variables → Actions):
+#   Secrets   : AI_API_BASE(OpenAI互換APIの入口。…/v1 まで)、AI_API_KEY(APIキー)
+#   Variables : AI_KEY_HEADER(キーを渡すヘッダー名。Authorization 以外のときだけ)
+#               AI_MODELS(任意。「表示名=モデルID」をカンマ区切り。省略時は Claude / GPT / Gemini の3つ)
+#
+# AIはIssueにコメントするだけで、ファイルは変更しない(permissions も contents: read)。
+
+on:
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: "議題(空なら、「議題」ラベルのIssue → design.md の未決事項から自動で選ぶ)"
+        required: false
+        default: ""
+      issue:
+        description: "続きの会議をするIssue番号(任意)"
+        required: false
+        default: ""
+      rounds:
+        description: "何周するか(1〜3)"
+        required: false
+        default: "2"
+
+concurrency:
+  group: ai-meeting
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  meeting:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test the meeting script
+        run: python -m unittest discover -s tools -p "test_*.py"
+
+      - name: Hold the meeting
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AI_API_BASE: ${{ secrets.AI_API_BASE }}
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_KEY_HEADER: ${{ vars.AI_KEY_HEADER }}
+          AI_MODELS: ${{ vars.AI_MODELS }}
+          # 入力は環境変数で渡す(スクリプトに直接埋め込まない)
+          MEETING_TOPIC: ${{ inputs.topic }}
+          MEETING_ISSUE: ${{ inputs.issue }}
+          MEETING_ROUNDS: ${{ inputs.rounds }}
+        run: python tools/ai_meeting.py
