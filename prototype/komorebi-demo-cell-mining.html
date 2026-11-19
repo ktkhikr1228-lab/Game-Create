@@ -322,7 +322,14 @@ function act(point) {
   if (demoMode === 'cell') {
     const cx = Math.floor(point.x/MAP_UNIT), cy = Math.floor(point.y/MAP_UNIT);
     if (cx < 0 || cx >= mapColumns || cy < 0 || cy >= mapRows) return;
-    const cid = tile(cx*2, cy*2);
+    // Cell id: scan all 4 subtiles (a material tile wins). Using only the top-left
+    // tile broke the demo when it had already been dug in tile mode (Codex's find).
+    let cid = 0;
+    for (const [xx, yy] of [[cx*2, cy*2], [cx*2+1, cy*2], [cx*2, cy*2+1], [cx*2+1, cy*2+1]]) {
+      const t = tile(xx, yy);
+      if (Object.hasOwn(materials, t)) { cid = t; break; }
+      if (!cid && t) cid = t;
+    }
     if (!cid || Math.hypot((cx+.5)*MAP_UNIT-px,(cy+.5)*MAP_UNIT-py) > 76) return;
     if (cid === HARD && !upgraded) {show('硬い岩。青銅のツルハシが必要。');return;}
     swing = {time: 0, duration: .15, type: 'pick', direction: player.facing, angle: Math.atan2(point.y-py, Math.abs(dx))};
