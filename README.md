@@ -69,5 +69,16 @@ Geminiの席。サブスク（Google AI Pro）とAPIキーは、使える場所�
 - **それ以外の道具やAI会議から呼ぶとき**：Google AI Studio で発行した **APIキー** を使う（AI Pro の毎月のGoogle Cloudクレジットが使える。最初に前払いが必要）
 - **やってはいけないこと**：AI Pro のログイン（OAuth）や、Gemini CLI の認証ファイルを、ほかのツールや GitHub の Secrets に渡すこと。Googleの規約違反になり、アカウントが止められることがある
 
+### Gemini PRレビュー（GitHub Actions）
+PRに `@gemini-cli /review` とコメントすると、GeminiがそのPRをレビューしてコメントを付ける。
+
+- 呼べるのはオーナーだけ。ほかの人が書いても動かない
+- Geminiができるのは、PRを読むこととレビューコメントを書くことだけ（コードの変更やpushはしない）
+- `/review` の後ろに、見てほしい点を書ける。例：`@gemini-cli /review 崩落の計算が重くないか見て`
+- 準備：Settings → Secrets に `GEMINI_API_KEY`（Google AI Studio で発行したAPIキー）を登録する。AI会議でGeminiを公式APIにするときと同じキーでよい
+- 任意：Variables の `GEMINI_MODEL` で使うモデルを指定できる
+- 費用：APIの従量課金（AI Pro の毎月のGoogle Cloudクレジットが使える）
+- 仕組み：`.github/workflows/gemini-review.yml`（Googleの公式の run-gemini-cli の例を元に、レビュー専用・オーナー限定にしたもの）
+
 ### ChatGPT（チャットで読むだけ）
 - ChatGPT の設定でGitHubを接続し、このrepoへのアクセスを許可
