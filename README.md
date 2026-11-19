@@ -9,6 +9,7 @@
 | `docs/decisions.md` | 決定ログ（いつ・何を・なぜ決めたか） |
 | `AGENTS.md` | AI参加者の共通ルール（Codex / ChatGPT が読む） |
 | `CLAUDE.md` | AGENTS.md を読み込むだけ（Claude が読む） |
+| `GEMINI.md` | AGENTS.md を読み込むだけ（Gemini CLI が読む） |
 | `.github/ISSUE_TEMPLATE/meeting.md` | 会議用Issueテンプレート |
 | `.github/workflows/claude.yml` | Issueで @claude を呼べるようにするAction |
 
@@ -58,6 +59,15 @@ Settings → Secrets and variables → Actions で登録する。
 1. ChatGPT の Codex でGitHubを接続（ChatGPT Codex Connector をrepoに許可）
 2. Codex cloud の環境をこのrepoで作成
 3. Issue / PR のコメントで `@codex` を呼ぶ
+
+### Gemini
+Geminiの席。サブスク（Google AI Pro）とAPIキーは、使える場所が違うので注意。
+
+- **ルールの読み込み**：Gemini CLI は `GEMINI.md` を読む。`GEMINI.md` は `AGENTS.md` を読み込むだけのファイルなので、ルールは `AGENTS.md` だけを直せばよい
+- **会議での使い方（手動）**：Geminiアプリに、Issueの本文と `AGENTS.md` を貼って答えをもらい、「Gemini の意見（オーナーが転記）」としてIssueにコメントする
+- **公式の道具（サブスクのログインでOK）**：Geminiアプリ、Gemini CLI、Antigravity、Jules
+- **それ以外の道具やAI会議から呼ぶとき**：Google AI Studio で発行した **APIキー** を使う（AI Pro の毎月のGoogle Cloudクレジットが使える。最初に前払いが必要）
+- **やってはいけないこと**：AI Pro のログイン（OAuth）や、Gemini CLI の認証ファイルを、ほかのツールや GitHub の Secrets に渡すこと。Googleの規約違反になり、アカウントが止められることがある
 
 ### ChatGPT（チャットで読むだけ）
 - ChatGPT の設定でGitHubを接続し、このrepoへのアクセスを許可

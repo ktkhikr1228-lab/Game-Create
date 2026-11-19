@@ -1,6 +1,6 @@
 # AGENTS.md — AI参加者共通ルール
 
-このファイルは Claude（CLAUDE.md 経由）と Codex / ChatGPT の両方が読む共通ルール。
+このファイルは Claude（CLAUDE.md 経由）、Gemini（GEMINI.md 経由）、Codex / ChatGPT が読む共通ルール。
 
 ## このrepoについて
 - Terraria風の2D採掘・クラフトゲームの企画repo（現在は企画段階）

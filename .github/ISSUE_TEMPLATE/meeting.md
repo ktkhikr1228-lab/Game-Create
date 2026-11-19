@@ -23,4 +23,11 @@ labels: meeting
 - 【現】と【ゲ】を分ける
 
 ---
-@claude @codex 上の議題について、AGENTS.md の会議ルールに従ってコメントで意見をください。ファイルの変更やPRの作成はしないでください。
+上の議題について、AGENTS.md の会議ルールに従ってコメントで意見をください。ファイルの変更やPRの作成はしないでください。
+
+<!-- 呼び出し方（使う参加者だけ残す）
+- Claude：この会話か Claude Code で「Issue #番号を読んで意見を書いて」と頼む
+- Gemini：Geminiアプリに、このIssueの本文と AGENTS.md を貼って答えをもらい、Issueに転記する
+- Codex：@codex（有料プランの間だけ）
+- 自動でまとめて聞くなら、Actions の「AI会議」を使う
+-->
