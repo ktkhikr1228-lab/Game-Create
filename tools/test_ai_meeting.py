@@ -265,3 +265,64 @@ class RouterTest(unittest.TestCase):
         router.check()
         self.assertFalse(router.routes["anthropic"].checked)
         self.assertTrue(router.routes["gemini"].checked)
+
+
+class EffortTest(unittest.TestCase):
+    def test_split_effort(self):
+        self.assertEqual(m.split_effort("gemini:gemini-4-argon@medium"), ("gemini:gemini-4-argon", "medium"))
+        self.assertEqual(m.split_effort("claude-opus-5.5"), ("claude-opus-5.5", None))
+        self.assertEqual(m.split_model("gemini:gemini-4-argon@low"), ("gemini", "gemini-4-argon"))
+        with self.assertRaises(m.MeetingError):
+            m.parse_models("A=x@fast,B=y")
+
+    def test_effort_is_sent_only_when_given(self):
+        import json as _json
+        bodies = []
+
+        class Ok:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return _json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
+
+        def opener(request, timeout):
+            bodies.append(_json.loads(request.data.decode()))
+            return Ok()
+        models = m.Models("https://x/v1", "k", opener=opener, sleep=lambda s: None, interval=0)
+        models.chat("m", "s", "u")
+        models.chat("m", "s", "u", effort="medium")
+        self.assertNotIn("reasoning_effort", bodies[0])
+        self.assertEqual(bodies[1]["reasoning_effort"], "medium")
+
+    def test_router_uses_the_spec_effort_and_the_override(self):
+        calls = []
+
+        class Route:
+            def __init__(self, *a, **k): pass
+            def check(self): pass
+            def chat(self, model, system, user, effort=None):
+                calls.append((model, effort))
+                return "ok"
+        router = m.Router({"GEMINI_API_KEY": "g", "AI_API_BASE": "b", "AI_API_KEY": "k"},
+                          m.parse_models("Gemini=gemini:gemini-4-argon@medium,Claude=claude-opus-5.5"), make=Route)
+        router.chat("gemini:gemini-4-argon@medium", "s", "u")
+        router.chat("gemini:gemini-4-argon@medium", "s", "u", effort="high")
+        router.chat("claude-opus-5.5", "s", "u")
+        self.assertEqual(calls, [("gemini-4-argon", "medium"), ("gemini-4-argon", "high"), ("claude-opus-5.5", None)])
+
+    def test_summary_effort_is_passed_to_the_summarizer(self):
+        seen = []
+
+        class Recorder(FakeModels):
+            def chat(self, model, system, user, effort=None):
+                seen.append((model, "まとめ役" in system, effort))
+                return super().chat(model, system, user)
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "docs").mkdir()
+            (root / "docs" / "design.md").write_text(DESIGN, encoding="utf-8")
+            (root / "docs" / "decisions.md").write_text("", encoding="utf-8")
+            (root / "AGENTS.md").write_text("ルール", encoding="utf-8")
+            m.run({"AI_MODELS": "A=a,B=b", "MEETING_TOPIC": "議題", "MEETING_ROUNDS": "1", "AI_SUMMARY_EFFORT": "high"},
+                  FakeGitHub(), Recorder(), docs_root=root, log=lambda *a: None)
+        self.assertIn(("a", True, "high"), seen)
+        self.assertTrue(all(effort is None for _, summary, effort in seen if not summary))
