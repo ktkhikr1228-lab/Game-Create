@@ -1,0 +1,857 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ワールド生成サンドボックス（使い捨て試作）</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:#101418;color:#e9e4d8;font:14px system-ui,sans-serif}
+main{max-width:1200px;margin:auto;padding:14px}
+h1{font-size:19px;margin:0 0 4px}
+.note{color:#9fb0aa;font-size:12px;margin:0 0 10px}
+.bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}
+.bar label{display:flex;align-items:center;gap:4px}
+input,select,button{font:inherit;color:inherit;background:#1d2629;border:1px solid #3a4a4c;border-radius:6px;padding:5px 8px}
+button{cursor:pointer}
+button.on{background:#3d5b4f;border-color:#6fa08a}
+#seed{width:120px}
+#status{min-height:20px;color:#ffd79a;font-size:13px}
+#viewport{position:relative;width:100%;height:62vh;min-height:320px;background:#0b0d10;border-radius:8px;overflow:hidden;touch-action:none}
+#view{width:100%;height:100%;display:block;cursor:grab}
+#view.dragging{cursor:grabbing}
+#info{min-height:20px;font-size:13px;color:#cfe0d6;margin:6px 0}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-top:8px}
+section{background:#161d20;border:1px solid #2b3a3c;border-radius:8px;padding:10px}
+section h2{font-size:14px;margin:0 0 8px}
+.legend{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:3px 10px;font-size:12px}
+.sw{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:5px;vertical-align:-1px;border:1px solid #0006}
+table{border-collapse:collapse;width:100%;font-size:12px}
+td,th{padding:2px 4px;border-bottom:1px solid #263234;text-align:left}
+td.n{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:#8fe3a2}.ng{color:#ff8f8f}.warn{color:#ffd27a}
+</style>
+</head>
+<body>
+<main>
+<h1>ワールド生成サンドボックス</h1>
+<p class="note">使い捨ての試作。生成のルールで「探し分けたくなる世界」ができるかを見るためのもの。1ブロック＝18px想定（ここでは1px〜で縮小表示）。</p>
+
+<div class="bar">
+  <label>シード <input id="seed" value="komorebi"></label>
+  <label>大きさ
+    <select id="size">
+      <option value="small">試作用 1600×600</option>
+      <option value="mid">中間 4000×1200</option>
+      <option value="full">本番相当 8000×2400</option>
+    </select>
+  </label>
+  <button id="gen">再生成</button>
+  <button id="rand">ランダムなシード</button>
+</div>
+<div class="bar" id="views">
+  <button data-view="material" class="on">素材</button>
+  <button data-view="region">地域</button>
+  <button data-view="strata">地層</button>
+  <button data-view="ores">鉱石だけ</button>
+  <button data-view="stability">崩れやすさ</button>
+  <button data-view="validate">検証</button>
+</div>
+<div class="bar">
+  <button id="zoomOut">－</button><button id="zoomIn">＋</button><button id="fit">全体</button><button id="toTown">町へ</button>
+  <span class="note" style="margin:0">ドラッグで移動、ホイールかボタンで拡大縮小。タップ／クリックでそのブロックの情報。</span>
+</div>
+<div id="status"></div>
+<div id="viewport"><canvas id="view"></canvas></div>
+<div id="info"></div>
+
+<div class="cols">
+  <section><h2>凡例</h2><div class="legend" id="legend"></div></section>
+  <section><h2>検証</h2><div id="validation"></div></section>
+  <section><h2>鉱石の数</h2><div id="oreStats"></div></section>
+  <section><h2>地層の割合・地物・生成時間</h2><div id="otherStats"></div></section>
+</div>
+</main>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+
+/* ---------------- 乱数とノイズ ---------------- */
+function hashString(s) {
+  let h = 1779033703 ^ s.length;
+  for (let i = 0; i < s.length; i++) { h = Math.imul(h ^ s.charCodeAt(i), 3432918353); h = h << 13 | h >>> 19; }
+  h = Math.imul(h ^ h >>> 16, 2246822507); h = Math.imul(h ^ h >>> 13, 3266489909);
+  return (h ^ h >>> 16) >>> 0;
+}
+class Rng {
+  constructor(seed) { this.a = (typeof seed === 'number' ? seed : hashString(String(seed))) >>> 0; }
+  f() { let t = this.a = this.a + 0x6D2B79F5 | 0; t = Math.imul(t ^ t >>> 15, 1 | t); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }
+  range(a, b) { return a + (b - a) * this.f(); }
+  int(a, b) { return Math.floor(this.range(a, b + 1)); }
+  pick(arr) { return arr[Math.floor(this.f() * arr.length)]; }
+  chance(p) { return this.f() < p; }
+  shuffle(arr) { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(this.f() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; }
+}
+function makeNoise1D(rng, scale, octaves = 4) {
+  const N = 2048, layers = [];
+  for (let o = 0; o < octaves; o++) { const t = new Float32Array(N); for (let i = 0; i < N; i++) t[i] = rng.f() * 2 - 1; layers.push(t); }
+  return x => {
+    let v = 0, amp = 1, sum = 0, s = scale;
+    for (let o = 0; o < octaves; o++) {
+      const p = x / s, i = Math.floor(p), t = p - i, k = t * t * (3 - 2 * t), tab = layers[o];
+      const a = tab[((i % N) + N) % N], b = tab[(((i + 1) % N) + N) % N];
+      v += (a + (b - a) * k) * amp; sum += amp; amp *= .5; s /= 2;
+    }
+    return v / sum;
+  };
+}
+function cellHash(seed, x, y) {
+  let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + seed) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function valueNoise2D(seed, x, y, scale) {
+  const px = x / scale, py = y / scale, ix = Math.floor(px), iy = Math.floor(py), fx = px - ix, fy = py - iy;
+  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+  const a = cellHash(seed, ix, iy), b = cellHash(seed, ix + 1, iy), c = cellHash(seed, ix, iy + 1), d = cellHash(seed, ix + 1, iy + 1);
+  return (a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy;
+}
+
+/* ---------------- ブロック定義 ---------------- */
+const BLOCKS = [], B = {};
+function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+function def(key, name, color, opt = {}) {
+  const id = BLOCKS.length;
+  BLOCKS.push({id, key, name, color, rgb: hexRgb(color), solid: true, cat: 'rock', stab: 0, ...opt});
+  B[key] = id; return id;
+}
+def('AIR', '空気', '#000000', {solid: false, cat: 'air'});
+// 地表の素材
+def('GRASS', '草地', '#5f8a3e', {cat: 'surface', stab: .2});
+def('DIRT', '土', '#7a5a3f', {cat: 'surface', stab: .3});
+def('SAND', '砂', '#d8c38a', {cat: 'surface', stab: .45});
+def('SNOW', '雪', '#e8eef2', {cat: 'surface', stab: .3});
+def('ASH', '灰', '#8f8f8f', {cat: 'surface', stab: .45});
+def('MUD', '泥', '#5a4e3a', {cat: 'surface', stab: .35});
+def('METALSOIL', '金気のある土', '#8fa3a8', {cat: 'surface', stab: .2});
+def('GLOWMOSS', '光る苔', '#6fd8bf', {cat: 'surface', stab: .2});
+// 岩
+def('GRAVEL', '砂利', '#8d8478', {stab: .4});
+def('SHALLOW', '浅い岩', '#77695c', {stab: .3});
+def('LIMESTONE', '石灰岩', '#c9c1a6', {stab: .15});
+def('BASALT', '玄武岩', '#3c3638', {stab: .1});
+def('SEDROCK', '堆積岩', '#8a6e5a', {stab: .25});
+def('SHALE', '頁岩', '#6d6268', {stab: .5});
+def('VEINROCK', '熱水の母岩', '#646a74', {stab: .2});
+def('PEGMATITE', 'ペグマタイト', '#9c9088', {stab: .3});
+def('GRANITE', '深成岩', '#545060', {stab: .05});
+def('ANOMROCK', '異層の岩', '#4b3f66', {stab: .45});
+def('ABYSSROCK', '最深部の岩', '#2c2338', {stab: .5});
+def('CRYSTAL', '巨大結晶', '#b9e6ef', {stab: .1});
+def('PETRIFIED', '石化した木', '#8c7b6a', {stab: .2});
+def('ICE', '氷', '#a9d8ef', {stab: .3});
+// 液体・植物・構造物
+def('WATER', '水', '#3b6fb5', {solid: false, cat: 'liquid'});
+def('LAVA', '溶岩', '#e2572a', {solid: false, cat: 'liquid'});
+def('REVWATER', '逆さ滝', '#5fa0e8', {solid: false, cat: 'liquid'});
+def('TRUNK', '幹', '#6b4a2e', {solid: false, cat: 'plant'});
+def('LEAVES', '葉', '#3f7a3a', {solid: false, cat: 'plant'});
+def('METALLEAF', '金属質の葉', '#b8c6cc', {solid: false, cat: 'plant'});
+def('TOWN', '町の建物', '#c9a46b', {cat: 'struct'});
+def('LADDER', 'はしご（竪坑）', '#b08850', {solid: false, cat: 'struct'});
+def('TIMBER', '坑木', '#7b5a33', {cat: 'struct', stab: .1});
+def('RUBBLE', '瓦礫（崩落跡）', '#77706a', {cat: 'struct', stab: .8});
+def('MILL', '水車小屋', '#a7834f', {cat: 'struct'});
+def('FORGE', '古い鍛冶場の跡', '#8a4f3a', {cat: 'struct'});
+// 鉱石
+const ORE = (key, name, color, group) => def(key, name, color, {cat: 'ore', group, stab: .2});
+ORE('NATIVECU', '自然銅', '#e0874a', '銅');
+ORE('MALACHITE', '孔雀石', '#2fae6a', '銅');
+ORE('CHALCOPYRITE', '黄銅鉱', '#d8c040', '銅');
+ORE('HEMATITE', '赤鉄鉱', '#b0443a', '鉄');
+ORE('MAGNETITE', '磁鉄鉱', '#4d5f78', '鉄');
+ORE('LIMONITE', '褐鉄鉱', '#b5793a', '鉄');
+ORE('SIDERITE', '菱鉄鉱', '#c09868', '鉄');
+ORE('PYRITE', '黄鉄鉱', '#f3e48c', '鉄');
+ORE('BLACKSAND', '黒い砂鉄', '#2a2a2a', '鉄');
+ORE('CASSITERITE', '錫石', '#cdb59a', '錫');
+ORE('GALENA', '方鉛鉱', '#9aa6b5', '鉛');
+ORE('SPHALERITE', '閃亜鉛鉱', '#7a4f2a', '亜鉛');
+ORE('GOLD', '砂金', '#ffd34a', '金');
+ORE('COAL', '石炭', '#1e1e1e', '燃料');
+ORE('FLUORITE', '蛍石', '#a77be0', 'その他');
+ORE('SCHEELITE', '灰重石', '#f2e2b0', 'その他');
+ORE('CHROMITE', 'クロム鉄鉱', '#4f7a63', 'その他');
+ORE('SALTPETER', '硝石', '#f4f4ea', 'その他');
+ORE('SULFUR', '硫黄', '#f5e030', 'その他');
+ORE('ROCKSALT', '岩塩', '#f0d0d0', 'その他');
+ORE('BAUXITE', 'ボーキサイト', '#c86a3a', 'その他');
+ORE('QUARTZ', '水晶', '#eaf6ff', '宝石');
+ORE('TOURMALINE', 'トルマリン', '#e04f8f', '宝石');
+ORE('GEM', '宝石の原石', '#ff3f5f', '宝石');
+ORE('GLOWSTONE', '灯晶石', '#7fe8ff', 'オリジナル');
+ORE('FLOATORE', '浮遊鉱', '#c8b4ff', 'オリジナル');
+ORE('COLDORE', '冷鉱', '#9fc4ff', 'オリジナル');
+ORE('MANADRAIN', '吸魔鉱', '#7a2a8a', 'オリジナル');
+
+const NB = BLOCKS.length;
+const isSolid = new Uint8Array(NB), isOre = new Uint8Array(NB), isRock = new Uint8Array(NB), passable = new Uint8Array(NB), climbable = new Uint8Array(NB), protectedBlk = new Uint8Array(NB);
+for (const b of BLOCKS) {
+  isSolid[b.id] = b.solid ? 1 : 0;
+  isOre[b.id] = b.cat === 'ore' ? 1 : 0;
+  isRock[b.id] = (b.cat === 'rock' || b.cat === 'surface') ? 1 : 0;
+  passable[b.id] = (!b.solid && b.key !== 'LAVA') ? 1 : 0;
+  climbable[b.id] = (b.key === 'LADDER' || b.key === 'WATER' || b.key === 'REVWATER') ? 1 : 0;
+  protectedBlk[b.id] = (b.cat === 'struct' || b.cat === 'liquid') ? 1 : 0;
+}
+const STRATA = [
+  {name: '上空・地上', color: '#1b2633'},
+  {name: '1 表土・浅い岩窟', color: '#a08060'},
+  {name: '2 堆積岩の層', color: '#9a6a4a'},
+  {name: '3 熱水鉱脈', color: '#6a7a8a'},
+  {name: '4 晶洞・ペグマタイト', color: '#9a8aa0'},
+  {name: '5 深成岩・スカルン', color: '#4a5a6a'},
+  {name: '6 異層', color: '#5a3a8a'},
+  {name: '7 最深部', color: '#3a1a4a'},
+  {name: '浮島', color: '#7a9a6a'},
+];
+
+/* ---------------- 地域 ---------------- */
+// tier 0=町 1=現実寄り 2=現実を大げさに 3=完全に架空
+const REGIONS = [
+  {key: 'town', name: '鉱山町と草原', tier: 0, color: '#d8b46b', h: .01, amp: .004, top: 'GRASS', topDepth: 4},
+  {key: 'river', name: '川と河原', tier: 1, color: '#5aa0d8', h: -.005, amp: .01, top: 'GRASS', topDepth: 4, near: true},
+  {key: 'swamp', name: '沼地', tier: 1, color: '#6b7a4a', h: -.012, amp: .004, top: 'MUD', topDepth: 6, near: true},
+  {key: 'forest', name: '温帯の森', tier: 1, color: '#3f8a4a', h: .01, amp: .02, top: 'GRASS', topDepth: 5, near: true},
+  {key: 'coast', name: '海岸', tier: 1, color: '#6ad0d0', h: -.02, amp: .005, top: 'SAND', topDepth: 8},
+  {key: 'desert', name: '乾燥地', tier: 1, color: '#e0c070', h: 0, amp: .015, top: 'SAND', topDepth: 14},
+  {key: 'tropical', name: '熱帯', tier: 1, color: '#2fbf5f', h: .005, amp: .02, top: 'GRASS', topDepth: 6},
+  {key: 'volcano', name: '火山', tier: 1, color: '#d0503a', h: .02, amp: .015, top: 'ASH', topDepth: 4},
+  {key: 'snow', name: '雪山・寒冷地', tier: 1, color: '#e0f0ff', h: .06, amp: .05, top: 'SNOW', topDepth: 4},
+  {key: 'highland', name: '岩山・高原', tier: 1, color: '#9a8a7a', h: .045, amp: .03, top: 'DIRT', topDepth: 1},
+  {key: 'limestone', name: '石灰岩の台地', tier: 1, color: '#d8d0b0', h: .03, amp: .01, top: 'GRASS', topDepth: 2},
+  {key: 'saltlake', name: '塩湖', tier: 1, color: '#f0e0e0', h: -.01, amp: .002, top: 'SAND', topDepth: 4},
+  {key: 'geothermal', name: '地熱地帯・温泉', tier: 1, color: '#c08a6a', h: .005, amp: .01, top: 'DIRT', topDepth: 4},
+  {key: 'metalforest', name: '金属の森', tier: 2, color: '#a0b8c0', h: .01, amp: .015, top: 'METALSOIL', topDepth: 5},
+  {key: 'maghill', name: '磁気の丘', tier: 2, color: '#5a6a8a', h: .03, amp: .02, top: 'GRASS', topDepth: 3},
+  {key: 'dunes', name: '歌う砂丘', tier: 2, color: '#f0d890', h: .005, amp: .03, top: 'SAND', topDepth: 18},
+  {key: 'crystalwaste', name: '巨大結晶の荒野', tier: 2, color: '#a0e0f0', h: .01, amp: .01, top: 'DIRT', topDepth: 3},
+  {key: 'ashplain', name: '灰の平原', tier: 3, color: '#a0a0a0', h: 0, amp: .004, top: 'ASH', topDepth: 6},
+  {key: 'glowfog', name: '光る霧の湿原', tier: 3, color: '#6fe0c8', h: -.008, amp: .004, top: 'GLOWMOSS', topDepth: 4},
+  {key: 'revfalls', name: '逆さ滝の谷', tier: 3, color: '#7090f0', h: .02, amp: .02, top: 'GRASS', topDepth: 3},
+];
+const POCKETS = {
+  glowforest: {name: '光る結晶の森', color: '#7fe8ff'},
+  petrified: {name: '石化した森', color: '#c0a080'},
+  floatcave: {name: '浮遊鉱の空洞', color: '#c8b4ff'},
+  frozen: {name: '凍土の洞窟', color: '#a9d8ef'},
+  silent: {name: '静かな空洞', color: '#b060c0'},
+  resonance: {name: '共鳴晶洞', color: '#eaf6ff'},
+};
+const STRUCTS = {
+  mine: {name: '廃坑', color: '#c08040'},
+  mill: {name: '水車小屋', color: '#e0b060'},
+  batcave: {name: 'コウモリの巣の洞窟', color: '#f4f4ea'},
+  forge: {name: '古い鍛冶場の跡', color: '#ff7050'},
+  islands: {name: '浮島', color: '#9ad08a'},
+};
+
+/* ---------------- 生成 ---------------- */
+const SIZES = {small: [1600, 600], mid: [4000, 1200], full: [8000, 2400]};
+let world = null;
+
+function generate(seedStr, sizeKey) {
+  const T = {}, t0 = performance.now();
+  let tp = t0;
+  const lap = name => { const n = performance.now(); T[name] = n - tp; tp = n; };
+  const [W, H] = SIZES[sizeKey];
+  const N = W * H;
+  const rng = new Rng(seedStr);
+  const seedNum = hashString(String(seedStr));
+  const blocks = new Uint8Array(N);
+  const layer = new Uint8Array(N);
+  const surf = new Int32Array(W);
+  const regionOf = new Uint8Array(W);
+  const bounds = []; // bounds[k][x]: 地層kの上端（k=2..7）
+  const features = [];
+  const scale = W / 1600; // 密度は面積比で増やす
+  const idx = (x, y) => y * W + x;
+  const inb = (x, y) => x >= 0 && x < W && y >= 0 && y < H;
+
+  /* 1. 世界の形：地域の配置 */
+  const cx = W >> 1;
+  const townW = Math.max(70, Math.round(W * .035));
+  const near = REGIONS.filter(r => r.near), river = REGIONS.find(r => r.key === 'river');
+  const tier1 = rng.shuffle(REGIONS.filter(r => r.tier === 1 && !r.near));
+  const tier2 = rng.shuffle(REGIONS.filter(r => r.tier === 2));
+  const tier3 = rng.shuffle(REGIONS.filter(r => r.tier === 3));
+  const order = [...rng.shuffle(near.filter(r => r !== river)), ...tier1, ...tier2, ...tier3];
+  const left = [], right = [];
+  const riverSide = rng.chance(.5) ? left : right;
+  riverSide.push(river);
+  for (const r of order) { (left.length <= right.length ? (rng.chance(.7) ? left : right) : (rng.chance(.7) ? right : left)).push(r); }
+  const sideWidth = Math.floor((W - townW) / 2);
+  const spans = []; // {r, x0, x1}
+  spans.push({r: REGIONS[0], x0: cx - (townW >> 1), x1: cx - (townW >> 1) + townW});
+  const layoutSide = (list, dir) => {
+    const weights = list.map(() => rng.range(.75, 1.3)), total = weights.reduce((a, b) => a + b, 0);
+    let pos = dir < 0 ? cx - (townW >> 1) : cx - (townW >> 1) + townW;
+    list.forEach((r, i) => {
+      const w = Math.max(30, Math.round(sideWidth * weights[i] / total));
+      const x0 = dir < 0 ? Math.max(0, pos - w) : pos, x1 = dir < 0 ? pos : Math.min(W, pos + w);
+      spans.push({r, x0, x1}); pos = dir < 0 ? x0 : x1;
+    });
+    if (dir < 0) spans[spans.length - 1].x0 = 0; else spans[spans.length - 1].x1 = W;
+  };
+  layoutSide(left, -1); layoutSide(right, 1);
+  for (const s of spans) for (let x = s.x0; x < s.x1; x++) regionOf[x] = REGIONS.indexOf(s.r);
+  const spanOf = key => spans.find(s => s.r.key === key);
+
+  /* 2. 地形：地表の高さ */
+  const skyH = Math.round(H * .10), surfaceBase = Math.round(H * .17);
+  const n1 = makeNoise1D(rng, 220 * Math.max(1, scale * .6), 4), n2 = makeNoise1D(rng, 40, 3);
+  const target = new Float32Array(W), ampArr = new Float32Array(W);
+  for (let x = 0; x < W; x++) { const r = REGIONS[regionOf[x]]; target[x] = r.h * H; ampArr[x] = r.amp * H; }
+  const smooth = (arr, rad) => { const out = new Float32Array(W); let acc = 0, cnt = 0; for (let x = -rad; x < W + rad; x++) { const a = x + rad, b = x - rad - 1; if (a < W && a >= 0) { acc += arr[a]; cnt++; } if (b >= 0 && b < W) { acc -= arr[b]; cnt--; } if (x >= 0 && x < W) out[x] = acc / cnt; } return out; };
+  const tS = smooth(target, 25), aS = smooth(ampArr, 25);
+  for (let x = 0; x < W; x++) surf[x] = Math.round(surfaceBase - tS[x] - (n1(x) * .7 + n2(x) * .3) * aS[x] * 2.2);
+  // 町は平らにする
+  const town = spanOf('town'); let tAvg = 0; for (let x = town.x0; x < town.x1; x++) tAvg += surf[x]; tAvg = Math.round(tAvg / (town.x1 - town.x0));
+  for (let x = town.x0; x < town.x1; x++) surf[x] = tAvg;
+  // 火山：円錐
+  const vol = spanOf('volcano');
+  if (vol) { const vc = (vol.x0 + vol.x1) >> 1, vw = (vol.x1 - vol.x0) * .45, vh = H * .09;
+    for (let x = vol.x0; x < vol.x1; x++) { const d = Math.abs(x - vc) / vw; if (d < 1) surf[x] -= Math.round(vh * (1 - d) * (d < .12 ? .7 : 1)); } }
+  // 逆さ滝の谷：深い谷
+  const rev = spanOf('revfalls');
+  if (rev) { const vc = (rev.x0 + rev.x1) >> 1, vw = (rev.x1 - rev.x0) * .3;
+    for (let x = rev.x0; x < rev.x1; x++) { const d = Math.abs(x - vc) / vw; if (d < 1) surf[x] += Math.round(H * .07 * Math.min(1, (1 - d) * 3)); } }
+  for (let x = 0; x < W; x++) surf[x] = Math.max(skyH + 20, Math.min(H * .4, surf[x]));
+  lap('地形');
+
+  /* 3. 地層 */
+  const fr = [0, .05, .17, .33, .47, .63, .85];
+  for (let k = 2; k <= 7; k++) {
+    const nb = makeNoise1D(rng, 140, 3), arr = new Int32Array(W);
+    for (let x = 0; x < W; x++) arr[x] = Math.round(surfaceBase + fr[k - 1] * (H - surfaceBase) + nb(x) * H * .018);
+    bounds[k] = arr;
+  }
+  for (let x = 0; x < W; x++) for (let k = 2; k <= 7; k++) if (bounds[k][x] <= surf[x] + 6) bounds[k][x] = surf[x] + 6 + k;
+  const shaleN = makeNoise1D(rng, 60, 2);
+  for (let x = 0; x < W; x++) {
+    const r = REGIONS[regionOf[x]], top = B[r.top], sub = (r.top === 'GRASS') ? B.DIRT : top, s0 = surf[x];
+    const b2 = bounds[2][x], b3 = bounds[3][x], b4 = bounds[4][x], b5 = bounds[5][x], b6 = bounds[6][x], b7 = bounds[7][x];
+    const lime = r.key === 'limestone', basalt = r.key === 'volcano', shOff = shaleN(x) * 8;
+    for (let y = 0; y < H; y++) {
+      const i = y * W + x;
+      if (y < s0) { blocks[i] = 0; layer[i] = 0; continue; }
+      const d = y - s0;
+      let s = y < b2 ? 1 : y < b3 ? 2 : y < b4 ? 3 : y < b5 ? 4 : y < b6 ? 5 : y < b7 ? 6 : 7;
+      layer[i] = s;
+      let id;
+      if (d === 0) id = top;
+      else if (d < r.topDepth) id = sub;
+      else if (s === 1) id = lime ? B.LIMESTONE : basalt ? B.BASALT : (valueNoise2D(seedNum, x, y, 14) > .68 ? B.GRAVEL : B.SHALLOW);
+      else if (s === 2) id = lime ? B.LIMESTONE : ((((y + shOff) % 23) + 23) % 23 < 4 ? B.SHALE : B.SEDROCK);
+      else id = [0, 0, 0, B.VEINROCK, B.PEGMATITE, B.GRANITE, B.ANOMROCK, B.ABYSSROCK][s];
+      blocks[i] = id;
+    }
+  }
+  lap('地層');
+
+  /* 地域ごとの地形・素材 */
+  const set = (x, y, id) => { if (inb(x, y)) blocks[idx(x, y)] = id; };
+  const get = (x, y) => inb(x, y) ? blocks[idx(x, y)] : B.GRANITE;
+  const stampEllipse = (x0, y0, rx, ry, fn) => {
+    for (let y = Math.floor(y0 - ry); y <= y0 + ry; y++) for (let x = Math.floor(x0 - rx); x <= x0 + rx; x++) {
+      if (!inb(x, y)) continue; const dx = (x - x0) / rx, dy = (y - y0) / ry; const d = dx * dx + dy * dy; if (d <= 1) fn(x, y, d);
+    }
+  };
+  const fillWaterDown = (x0, x1, level) => { // 地表より下の空気を水位まで水で満たす（谷・窪地用）
+    for (let x = Math.max(0, x0); x < Math.min(W, x1); x++) for (let y = level; y < surf[x]; y++) if (blocks[idx(x, y)] === 0) blocks[idx(x, y)] = B.WATER;
+  };
+  const tree = (x, y, kind) => {
+    const h = kind === 'conifer' ? rng.int(6, 10) : rng.int(4, 8), leaf = kind === 'metal' ? B.METALLEAF : B.LEAVES;
+    for (let k = 1; k <= h; k++) set(x, y - k, B.TRUNK);
+    const rr = kind === 'conifer' ? 2 : 3;
+    stampEllipse(x, y - h, rr, kind === 'conifer' ? 4 : 2.5, (px, py) => { if (get(px, py) === 0) set(px, py, leaf); });
+  };
+  for (const s of spans) {
+    const r = s.r, w = s.x1 - s.x0, mid = (s.x0 + s.x1) >> 1;
+    if (r.key === 'river') {
+      const cw = Math.max(10, Math.round(w * .18)), depth = 6 + rng.int(0, 3);
+      const rc = mid + rng.int(-w * .15, w * .15);
+      for (let x = rc - cw; x <= rc + cw; x++) { if (x < 0 || x >= W) continue; const d = Math.abs(x - rc) / cw; const cut = Math.round(depth * (1 - d * d)); for (let k = 0; k < cut; k++) set(x, surf[x] + k, 0); surf[x] += cut; set(x, surf[x], B.SAND); set(x, surf[x] + 1, B.GRAVEL); }
+      const level = Math.min(surf[rc - cw], surf[rc + cw]) + 1;
+      fillWaterDown(rc - cw, rc + cw + 1, level);
+      // 砂鉱：川底に錫石と砂金
+      let placed = 0;
+      for (let x = rc - cw; x <= rc + cw; x++) for (let k = 0; k < 3; k++) { if (rng.chance(.22)) { set(x, surf[x] + k, rng.chance(.8) ? B.CASSITERITE : B.GOLD); placed++; } }
+      // 昔の川筋：河原の地下に埋もれた砂鉱の層
+      for (let k = 0; k < Math.max(2, w / 30); k++) { const px = rng.int(s.x0, s.x1 - 20), py = surf[px] + rng.int(5, 16), len = rng.int(10, 24);
+        for (let j = 0; j < len; j++) for (let t = 0; t < 2; t++) if (rng.chance(.35) && isRock[get(px + j, py + t)]) set(px + j, py + t, rng.chance(.85) ? B.CASSITERITE : B.GOLD); }
+      const millX = rc + (rng.chance(.5) ? -cw - 8 : cw + 3);
+      const my = surf[millX];
+      // 足場を平らにしてから建てる（斜面に建てると入口が段差でふさがる）
+      for (let x = millX - 1; x < millX + 7; x++) { if (x < 0 || x >= W) continue; for (let y = Math.min(surf[x], my); y < Math.max(surf[x], my); y++) set(x, y, y < my ? 0 : B.DIRT); set(x, my, B.GRASS); surf[x] = my; }
+      for (let y = my - 7; y < my; y++) for (let x = millX; x < millX + 6; x++) set(x, y, (y === my - 7 || ((x === millX || x === millX + 5) && y < my - 3)) ? B.MILL : 0);
+      features.push({kind: 'mill', x: millX + 3, y: my - 3, r: 5});
+    } else if (r.key === 'swamp') {
+      for (let k = 0; k < Math.max(2, w / 40); k++) { const px = rng.int(s.x0 + 5, s.x1 - 10), pw = rng.int(6, 14), pd = rng.int(2, 3);
+        for (let x = px; x < px + pw; x++) { for (let j = 0; j < pd; j++) set(x, surf[x] + j, 0); surf[x] += pd; }
+        fillWaterDown(px, px + pw, surf[px] - pd + 1); }
+      for (let x = s.x0; x < s.x1; x++) for (let k = 0; k < 4; k++) if (rng.chance(.12)) set(x, surf[x] + k, B.LIMONITE);
+      for (let x = s.x0 + 3; x < s.x1; x += rng.int(10, 22)) if (get(x, surf[x] - 1) === 0) tree(x, surf[x], 'broad');
+    } else if (r.key === 'forest' || r.key === 'town' || r.key === 'tropical' || r.key === 'snow' || r.key === 'metalforest') {
+      const kind = r.key === 'snow' ? 'conifer' : r.key === 'metalforest' ? 'metal' : 'broad';
+      const gap = r.key === 'town' ? 999 : r.key === 'forest' || r.key === 'tropical' || r.key === 'metalforest' ? [5, 10] : [10, 24];
+      if (gap !== 999) for (let x = s.x0 + 3; x < s.x1 - 3; x += rng.int(gap[0], gap[1])) if (get(x, surf[x] - 1) === 0) tree(x, surf[x], kind);
+      if (r.key === 'tropical') for (let k = 0; k < w / 25; k++) { const x = rng.int(s.x0, s.x1 - 1); stampEllipse(x, surf[x] + rng.int(4, 8), rng.int(6, 14), rng.int(2, 3), (px, py) => { if (isRock[get(px, py)]) set(px, py, B.BAUXITE); }); }
+      if (r.key === 'snow') for (let k = 0; k < w / 40; k++) { const x = rng.int(s.x0, s.x1 - 1); stampEllipse(x, surf[x] + rng.int(5, 25), rng.int(3, 8), rng.int(2, 4), (px, py) => { if (isRock[get(px, py)]) set(px, py, B.ICE); }); }
+    } else if (r.key === 'coast') {
+      const sw = Math.round(w * .45), sx = rng.chance(.5) ? s.x0 + 4 : s.x1 - sw - 4;
+      for (let x = sx; x < sx + sw; x++) { const d = Math.abs(x - (sx + sw / 2)) / (sw / 2); const cut = Math.round(22 * (1 - d * d)); for (let k = 0; k < cut; k++) set(x, surf[x] + k, 0); surf[x] += cut; set(x, surf[x], B.SAND); set(x, surf[x] + 1, B.SAND); }
+      fillWaterDown(sx, sx + sw, Math.min(surf[sx], surf[sx + sw - 1]) + 1);
+      for (let x = s.x0; x < s.x1; x++) for (let k = 0; k < 4; k++) if (rng.chance(.07)) set(x, surf[x] + k, B.BLACKSAND);
+    } else if (r.key === 'desert' || r.key === 'dunes') {
+      if (r.key === 'desert') for (let k = 0; k < w / 18; k++) { const x = rng.int(s.x0, s.x1 - 1); stampEllipse(x, surf[x] + rng.int(4, 18), rng.int(5, 12), rng.int(1, 2), (px, py) => { if (isRock[get(px, py)]) set(px, py, B.SALTPETER); }); }
+    } else if (r.key === 'volcano') {
+      const vc = mid;
+      stampEllipse(vc, surf[vc] + 4, Math.max(4, w * .05), 6, (px, py) => set(px, py, py >= surf[vc] + 1 ? B.LAVA : 0));
+      for (let k = 0; k < w / 6; k++) { const x = vc + Math.round(rng.range(-w * .3, w * .3)); if (inb(x, surf[x])) stampEllipse(x, surf[x] + rng.int(0, 6), rng.int(1, 3), rng.int(1, 2), (px, py) => { if (isRock[get(px, py)]) set(px, py, B.SULFUR); }); }
+      for (let k = 0; k < 3; k++) { const x = vc + rng.int(-w * .2, w * .2); let y = surf[x] + 10; for (let j = 0; j < 80 && inb(x, y); j++) { stampEllipse(x + j * .5, y + j * .8, 2, 2, (px, py) => { if (isRock[get(px, py)]) set(px, py, B.LAVA); }); } }
+    } else if (r.key === 'highland') {
+      for (let k = 0; k < w / 30; k++) { const x = rng.int(s.x0, s.x1 - 1), ore = rng.pick([B.CHALCOPYRITE, B.NATIVECU, B.GALENA, B.HEMATITE]); for (let j = 0; j < rng.int(3, 8); j++) set(x + (j >> 2), surf[x] + j, ore); }
+    } else if (r.key === 'saltlake') {
+      const lw = Math.round(w * .6), lx = mid - (lw >> 1);
+      for (let x = lx; x < lx + lw; x++) { const d = Math.abs(x - mid) / (lw / 2); const cut = Math.round(4 * (1 - d * d)); for (let k = 0; k < cut; k++) set(x, surf[x] + k, 0); surf[x] += cut; for (let k = 0; k < 5; k++) set(x, surf[x] + 1 + k, B.ROCKSALT); }
+      fillWaterDown(lx, lx + lw, Math.min(surf[lx], surf[lx + lw - 1]) + 1);
+    } else if (r.key === 'geothermal') {
+      for (let k = 0; k < Math.max(2, w / 50); k++) { const px = rng.int(s.x0 + 5, s.x1 - 10), pw = rng.int(4, 9); for (let x = px; x < px + pw; x++) { set(x, surf[x], 0); set(x, surf[x] + 1, 0); surf[x] += 2; } fillWaterDown(px, px + pw, surf[px] - 1); }
+      for (let k = 0; k < w / 20; k++) { const x = rng.int(s.x0, s.x1 - 1); stampEllipse(x, surf[x] + rng.int(4, 20), rng.int(1, 3), rng.int(1, 2), (px, py) => { if (isRock[get(px, py)]) set(px, py, B.TOURMALINE); }); }
+    } else if (r.key === 'maghill') {
+      stampEllipse(mid, surf[mid] + H * .05, w * .3, H * .035, (px, py) => { if (isRock[get(px, py)]) set(px, py, rng.chance(.85) ? B.MAGNETITE : get(px, py)); });
+    } else if (r.key === 'crystalwaste') {
+      for (let k = 0; k < Math.max(3, w / 22); k++) { const x = rng.int(s.x0 + 4, s.x1 - 4), h = rng.int(10, 30), tilt = rng.range(-.6, .6), th = rng.int(2, 4);
+        for (let j = -6; j < h; j++) for (let t = 0; t < th; t++) set(Math.round(x + j * tilt) + t, surf[x] - j, B.CRYSTAL); }
+    } else if (r.key === 'glowfog') {
+      for (let k = 0; k < Math.max(2, w / 45); k++) { const px = rng.int(s.x0 + 5, s.x1 - 10), pw = rng.int(5, 12); for (let x = px; x < px + pw; x++) { set(x, surf[x], 0); surf[x] += 1; } fillWaterDown(px, px + pw, surf[px]); }
+      for (let x = s.x0; x < s.x1; x++) for (let k = 1; k < 8; k++) if (rng.chance(.03)) set(x, surf[x] + k, B.GLOWSTONE);
+    } else if (r.key === 'revfalls') {
+      const vc = mid, side = rng.chance(.5) ? -1 : 1;
+      let edge = vc; for (let x = vc; Math.abs(x - vc) < w * .45; x += side) { if (surf[x] < surf[vc] - 20) { edge = x - side; break; } }
+      const top = surf[edge + side * 3] - 4;
+      for (let x = edge; x !== edge - side * 4; x -= side) for (let y = top; y < surf[x]; y++) if (get(x, y) === 0) set(x, y, B.REVWATER);
+    }
+    // 地表の薄い層：高原は岩が露出
+    if (r.key === 'highland') for (let x = s.x0; x < s.x1; x++) if (rng.chance(.5)) set(x, surf[x], B.SHALLOW);
+  }
+  lap('地域');
+
+  /* 4. 鉱石（洞窟より先に置くので、洞窟が鉱石を削ることはあっても、鉱石が通路をふさぐことはない） */
+  const hostOK = (x, y, strataSet) => inb(x, y) && isRock[blocks[idx(x, y)]] && strataSet.has(layer[idx(x, y)]) && y > surf[x] + 1;
+  const yInStrata = (x, s) => { const top = s === 1 ? surf[x] + 3 : bounds[s][x], bot = s === 7 ? H - 2 : bounds[s + 1][x]; return Math.round(rng.range(top, Math.max(top + 1, bot))); };
+  const strataArea = s => { let a = 0; for (let x = 0; x < W; x += 16) { const top = s === 1 ? surf[x] : bounds[s][x], bot = s === 7 ? H : bounds[s + 1][x]; a += Math.max(0, bot - top) * 16; } return a; };
+  const DEPOSITS = [
+    {ore: 'NATIVECU', type: 'blob', strata: [1], dens: 55, r: [1, 2]},
+    {ore: 'MALACHITE', type: 'blob', strata: [1], dens: 55, r: [1, 2]},
+    {ore: 'GLOWSTONE', type: 'blob', strata: [1, 2, 3], dens: 1.5, r: [0, 1]},
+    {ore: 'HEMATITE', type: 'layer', strata: [2], dens: 9, len: [40, 150], th: [2, 3]},
+    {ore: 'COAL', type: 'layer', strata: [2], dens: 7, len: [30, 110], th: [1, 2]},
+    {ore: 'SIDERITE', type: 'blob', strata: [2], dens: 14, r: [2, 3]},
+    {ore: 'PYRITE', type: 'vein', strata: [2, 3], dens: 10, len: [20, 60], w: [1, 1]},
+    {ore: 'CHALCOPYRITE', type: 'vein', strata: [3], dens: 16, len: [25, 90], w: [1, 2]},
+    {ore: 'GALENA', type: 'vein', strata: [3], dens: 11, len: [20, 70], w: [1, 2]},
+    {ore: 'SPHALERITE', type: 'vein', strata: [3], dens: 10, len: [20, 70], w: [1, 1]},
+    {ore: 'FLUORITE', type: 'vein', strata: [3], dens: 7, len: [15, 50], w: [1, 1]},
+    {ore: 'CASSITERITE', type: 'vein', strata: [3, 5], dens: 3, len: [10, 40], w: [1, 1]},
+    {ore: 'MAGNETITE', type: 'blob', strata: [5], dens: 18, r: [2, 5]},
+    {ore: 'CHROMITE', type: 'blob', strata: [5], dens: 7, r: [2, 3]},
+    {ore: 'SCHEELITE', type: 'blob', strata: [5], dens: 6, r: [1, 2]},
+    {ore: 'GLOWSTONE', type: 'blob', strata: [6], dens: 10, r: [1, 2]},
+    {ore: 'FLOATORE', type: 'blob', strata: [6], dens: 6, r: [1, 2]},
+    {ore: 'COLDORE', type: 'blob', strata: [6], dens: 5, r: [1, 2]},
+    {ore: 'MANADRAIN', type: 'blob', strata: [6], dens: 4, r: [1, 2]},
+    {ore: 'GLOWSTONE', type: 'blob', strata: [7], dens: 22, r: [1, 3]},
+    {ore: 'FLOATORE', type: 'blob', strata: [7], dens: 14, r: [1, 3]},
+    {ore: 'COLDORE', type: 'blob', strata: [7], dens: 12, r: [1, 3]},
+    {ore: 'MANADRAIN', type: 'blob', strata: [7], dens: 10, r: [1, 3]},
+  ];
+  const areaCache = {};
+  const placeDeposit = (dp, x, y) => {
+    const id = B[dp.ore], ss = new Set(dp.strata);
+    if (dp.type === 'blob') { const r = rng.int(dp.r[0], dp.r[1]) + .5, ry = Math.max(.5, r * rng.range(.6, 1)); stampEllipse(x, y, r, ry, (px, py) => { if (hostOK(px, py, ss) && cellHash(seedNum, px, py) < .85) blocks[idx(px, py)] = id; }); }
+    else if (dp.type === 'layer') { const len = rng.int(dp.len[0], dp.len[1]), th = rng.int(dp.th[0], dp.th[1]), slope = rng.range(-.08, .08), ln = makeNoise1D(rng, 25, 2);
+      for (let j = 0; j < len; j++) { const px = x + j, py0 = Math.round(y + j * slope + ln(j) * 2); if (ln(j * 3 + 99) < -.6) continue; for (let t = 0; t < th; t++) if (hostOK(px, py0 + t, ss)) blocks[idx(px, py0 + t)] = id; } }
+    else if (dp.type === 'vein') { let px = x, py = y, ang = rng.range(.35, 1.2) * (rng.chance(.5) ? 1 : -1) + (rng.chance(.5) ? 0 : Math.PI); const len = rng.int(dp.len[0], dp.len[1]), wd = rng.int(dp.w[0], dp.w[1]);
+      for (let j = 0; j < len; j++) { ang += rng.range(-.25, .25); px += Math.cos(ang); py += Math.sin(ang); for (let a = 0; a < wd; a++) for (let b = 0; b < wd; b++) { const qx = Math.round(px) + a, qy = Math.round(py) + b; if (hostOK(qx, qy, ss)) blocks[idx(qx, qy)] = id; }
+        if (rng.chance(.02)) placeDeposit({...dp, len: [5, 15]}, Math.round(px), Math.round(py)); } }
+  };
+  for (const dp of DEPOSITS) {
+    const key = dp.strata.join(',');
+    if (!(key in areaCache)) areaCache[key] = dp.strata.reduce((a, s) => a + strataArea(s), 0);
+    const count = Math.round(dp.dens * areaCache[key] / 100000);
+    for (let k = 0; k < count; k++) { const x = rng.int(0, W - 1), s = rng.pick(dp.strata); placeDeposit(dp, x, yInStrata(x, s)); }
+  }
+  // 町の近くには序盤の銅を必ず置く
+  for (let k = 0; k < 14; k++) { const x = cx + Math.round(rng.range(-townW * 2.5, townW * 2.5)); placeDeposit({ore: rng.chance(.5) ? 'NATIVECU' : 'MALACHITE', type: 'blob', strata: [1], r: [1, 2]}, x, surf[x] + rng.int(4, 18)); }
+  lap('鉱石');
+
+  /* 5. 洞窟 */
+  const carve = (x, y, r) => { stampEllipse(x, y, r, r * .8, (px, py) => { const i = idx(px, py); if (py > surf[px] + 2 && !protectedBlk[blocks[i]]) blocks[i] = 0; }); };
+  const worm = (x, y, len, r0, r1, flat) => { let ang = rng.range(0, Math.PI * 2), r = rng.range(r0, r1);
+    for (let j = 0; j < len; j++) { ang += rng.range(-.35, .35); r = Math.max(r0, Math.min(r1, r + rng.range(-.25, .25))); x += Math.cos(ang); y += Math.sin(ang) * flat; if (!inb(x | 0, y | 0)) break; carve(x, y, r); } };
+  const caveSpec = {1: [6, 1, 2, .55], 2: [6, 1, 2.6, .5], 3: [4, 1, 2, .7], 4: [3, 1, 2, .6], 5: [2, 1, 2, .6], 6: [7, 2, 4, .6], 7: [7, 2.5, 5, .5]};
+  for (let s = 1; s <= 7; s++) { const [dens, r0, r1, flat] = caveSpec[s], count = Math.round(dens * strataArea(s) / 100000);
+    for (let k = 0; k < count; k++) { const x = rng.int(0, W - 1); worm(x, yInStrata(x, s), rng.int(40, 200), r0, r1, flat); } }
+  const lime = spanOf('limestone');
+  if (lime) for (let k = 0; k < (lime.x1 - lime.x0) / 15; k++) { const x = rng.int(lime.x0, lime.x1 - 1); worm(x, surf[x] + rng.int(8, 60), rng.int(60, 160), 2, 4, .4); }
+  // 洞窟の入口
+  for (let k = 0; k < W / 220; k++) { const x = rng.int(0, W - 1); if (Math.abs(x - cx) < townW) continue; let px = x, py = surf[x] + 1; const ang0 = Math.PI / 2 + rng.range(-.6, .6); let ang = ang0;
+    for (let j = 0; j < rng.int(25, 70); j++) { ang += rng.range(-.2, .2); px += Math.cos(ang); py += Math.sin(ang); stampEllipse(px, py, 1.6, 1.4, (qx, qy) => { const i = idx(qx, qy); if (!protectedBlk[blocks[i]]) blocks[i] = 0; }); } }
+  // 晶洞（深さ4）：空洞のふちに水晶・トルマリン・宝石の原石
+  const geodeCount = Math.round(9 * strataArea(4) / 100000);
+  for (let k = 0; k < geodeCount; k++) { const x = rng.int(0, W - 1), y = yInStrata(x, 4), rx = rng.int(3, 7), ry = rng.int(2, 5);
+    stampEllipse(x, y, rx + 1.2, ry + 1.2, (px, py, d) => { const i = idx(px, py); if (protectedBlk[blocks[i]] || layer[i] !== 4) return; const inner = ((px - x) / rx) ** 2 + ((py - y) / ry) ** 2; if (inner <= 1) blocks[i] = 0; else if (isSolid[blocks[i]]) { const h = cellHash(seedNum + 7, px, py); blocks[i] = h < .45 ? B.QUARTZ : h < .6 ? B.TOURMALINE : h < .66 ? B.GEM : blocks[i]; } }); }
+  lap('洞窟');
+
+  /* 不思議な場所（地下のポケット）：深い・遠いほど大きい */
+  const pocketCount = Math.max(6, Math.round(16 * scale));
+  const pocketTypes = [['petrified', [1, 3]], ['glowforest', [2, 7]], ['frozen', [3, 7]], ['resonance', [4, 4]], ['floatcave', [4, 7]], ['silent', [5, 7]]];
+  for (let k = 0; k < pocketCount; k++) {
+    const [type, [sa, sb]] = pocketTypes[k % pocketTypes.length];
+    let x = rng.int(0, W - 1); const dist = Math.abs(x - cx) / (W / 2); if (dist < .12) x = (x + (W >> 2)) % W;
+    const s = rng.int(sa, sb), y = yInStrata(x, s), depthF = (y - surfaceBase) / (H - surfaceBase), distF = Math.abs(x - cx) / (W / 2);
+    const rx = Math.round(10 + 22 * depthF + 16 * distF) * (type === 'resonance' ? .6 : 1), ry = rx * .55;
+    const wall = {glowforest: B.GLOWSTONE, petrified: B.PETRIFIED, floatcave: B.FLOATORE, frozen: B.ICE, silent: B.MANADRAIN, resonance: B.QUARTZ}[type];
+    stampEllipse(x, y, rx + 2, ry + 2, (px, py) => { const i = idx(px, py); if (py <= surf[px] + 3 || protectedBlk[blocks[i]]) return; const inner = ((px - x) / rx) ** 2 + ((py - y) / ry) ** 2;
+      if (inner <= 1) blocks[i] = 0; else if (isSolid[blocks[i]] && cellHash(seedNum + 3, px, py) < .7) blocks[i] = wall; });
+    // 中身
+    if (type === 'glowforest') for (let j = 0; j < rx; j++) { const px = Math.round(x + rng.range(-rx * .8, rx * .8)); let py = Math.round(y + ry * .9); while (py > y - ry && get(px, py) === 0) py++; for (let h = 1; h < rng.int(3, 8); h++) if (get(px, py - h) === 0) set(px, py - h, B.GLOWSTONE); }
+    if (type === 'petrified') for (let j = 0; j < rx / 3; j++) { const px = Math.round(x + rng.range(-rx * .7, rx * .4)), py = Math.round(y + ry * .5 - rng.int(0, 3)); for (let h = 0; h < rng.int(5, 12); h++) if (get(px + h, py) === 0) set(px + h, py, B.PETRIFIED); }
+    if (type === 'floatcave') for (let j = 0; j < rx / 3; j++) { const px = x + rng.range(-rx * .7, rx * .7), py = y + rng.range(-ry * .6, ry * .3); stampEllipse(px, py, rng.int(1, 3), 1.2, (qx, qy) => { if (get(qx, qy) === 0) set(qx, qy, rng.chance(.4) ? B.FLOATORE : B.ANOMROCK); }); }
+    if (type === 'frozen') for (let j = 0; j < rx; j++) { const px = Math.round(x + rng.range(-rx, rx)), py = Math.round(y + rng.range(-ry, ry)); if (isSolid[get(px, py)]) set(px, py, rng.chance(.3) ? B.COLDORE : B.ICE); }
+    features.push({kind: 'pocket', type, x, y, r: rx});
+  }
+  lap('不思議な場所');
+
+  /* 6. 施設 */
+  // 町：建物と竪坑
+  const shaftX = cx + rng.int(-6, 6), shaftBottom = Math.round((bounds[2][shaftX] + bounds[3][shaftX]) / 2);
+  for (let k = 0; k < 6; k++) { const bw = rng.int(6, 11), bh = rng.int(5, 8), bx = town.x0 + 4 + Math.round((town.x1 - town.x0 - 16) * k / 6); if (Math.abs(bx - shaftX) < 14) continue;
+    for (let y = tAvg - bh; y < tAvg; y++) for (let x = bx; x < bx + bw; x++) set(x, y, (y === tAvg - bh || x === bx || x === bx + bw - 1) && !((x === bx || x === bx + bw - 1) && y > tAvg - 3) ? B.TOWN : 0); }
+  for (let y = tAvg - 3; y <= shaftBottom; y++) { set(shaftX - 1, y, y < tAvg ? (y === tAvg - 3 ? B.TIMBER : 0) : B.TIMBER); set(shaftX, y, B.LADDER); set(shaftX + 1, y, B.LADDER); set(shaftX + 2, y, y < tAvg ? (y === tAvg - 3 ? B.TIMBER : 0) : B.TIMBER); }
+  const adits = [Math.round(tAvg + (bounds[2][shaftX] - tAvg) * .5), Math.round((bounds[2][shaftX] + shaftBottom) / 2), shaftBottom - 1];
+  for (const ay of adits) { const dir = rng.chance(.5) ? -1 : 1, len = rng.int(40, 90);
+    for (let h = 0; h < 3; h++) set(dir < 0 ? shaftX - 1 : shaftX + 2, ay - h, 0); // 竪坑の壁に横坑の口を開ける
+    for (let j = 1; j < len; j++) { const x = dir < 0 ? shaftX - j : shaftX + 1 + j; for (let h = 0; h < 3; h++) { const i = idx(x, ay - h); if (!protectedBlk[blocks[i]] || blocks[i] === B.WATER) blocks[i] = 0; } set(x, ay + 1, j % 7 === 0 ? B.TIMBER : (isSolid[get(x, ay + 1)] ? get(x, ay + 1) : B.TIMBER)); if (j % 7 === 0) { set(x, ay - 3, B.TIMBER); } } }
+  // 序盤の鉱石は、町の横坑の壁に必ず顔を出させる（大きい世界でも最初の銅に迷わないように）
+  for (const ay of adits.slice(0, 2)) for (let k = 0; k < 3; k++) {
+    const x = shaftX + (rng.chance(.5) ? -1 : 1) * rng.int(8, 36), y = rng.chance(.5) ? ay - 3 - rng.int(0, 1) : ay + 2;
+    const ore = k % 2 ? B.MALACHITE : B.NATIVECU;
+    stampEllipse(x, y, rng.int(1, 2) + .5, 1.2, (px, py) => { if (isRock[get(px, py)]) set(px, py, ore); });
+  }
+  features.push({kind: 'town', x: cx, y: tAvg - 4, r: townW / 2});
+  // 廃坑
+  const mineCount = Math.max(2, Math.round(3 * scale));
+  for (let k = 0; k < mineCount; k++) { const side = k % 2 ? 1 : -1, x = Math.round(cx + side * W * rng.range(.07, .33)); const bottom = rng.chance(.5) ? bounds[3][x] + rng.int(5, 30) : bounds[2][x] + rng.int(5, 30);
+    for (let y = surf[x] - 1; y < bottom; y++) { set(x - 1, y, B.TIMBER); set(x, y, B.LADDER); set(x + 1, y, B.LADDER); set(x + 2, y, B.TIMBER); }
+    for (let t = 0; t < 3; t++) { const ay = Math.round(surf[x] + (bottom - surf[x]) * (t + 1) / 4), dir = rng.chance(.5) ? -1 : 1, len = rng.int(30, 80), collapseAt = rng.chance(.6) ? rng.int(10, len - 5) : -1;
+      for (let h = 0; h < 3; h++) set(dir < 0 ? x - 1 : x + 2, ay - h, 0);
+      for (let j = 2; j < len; j++) { const px = x + dir * j; for (let h = 0; h < 3; h++) set(px, ay - h, (collapseAt > 0 && j >= collapseAt && j < collapseAt + 6) ? B.RUBBLE : 0); if (j % 6 === 0) { set(px, ay + 1, B.TIMBER); set(px, ay - 3, B.TIMBER); } } }
+    features.push({kind: 'mine', x, y: Math.round((surf[x] + bottom) / 2), r: 10}); }
+  // コウモリの巣の洞窟（硝石）：町から少し離れた浅い層
+  for (let k = 0; k < Math.max(1, Math.round(1.5 * scale)); k++) { const x = Math.round(cx + (rng.chance(.5) ? -1 : 1) * W * rng.range(.12, .3)), s = rng.chance(.5) ? 1 : 2, y = yInStrata(x, s), rx = rng.int(8, 13), ry = rng.int(4, 7);
+    stampEllipse(x, y, rx, ry, (px, py) => { const i = idx(px, py); if (py > surf[px] + 3 && !protectedBlk[blocks[i]]) blocks[i] = 0; });
+    for (let px = x - rx; px <= x + rx; px++) { let py = y; while (py < y + ry + 3 && get(px, py) === 0) py++; if (isSolid[get(px, py)] && rng.chance(.7)) { set(px, py, B.SALTPETER); if (rng.chance(.5)) set(px, py + 1, B.SALTPETER); } }
+    features.push({kind: 'batcave', x, y, r: rx}); }
+  // 古い鍛冶場の跡
+  for (let k = 0; k < Math.max(2, Math.round(2 * scale)); k++) { const x = Math.round(cx + (k % 2 ? 1 : -1) * W * rng.range(.1, .4)), s = rng.chance(.5) ? 2 : 3, y = yInStrata(x, s), rw = rng.int(9, 14), rh = rng.int(5, 7);
+    for (let py = y - rh; py <= y; py++) for (let px = x; px <= x + rw; px++) set(px, py, (py === y - rh || py === y || px === x || px === x + rw) ? B.FORGE : 0);
+    features.push({kind: 'forge', x: x + (rw >> 1), y: y - (rh >> 1), r: 8}); }
+  // 浮島：遠い地域の上空
+  for (const s of spans) { if (s.r.tier < 2) continue; const cnt = s.r.tier === 3 ? 3 : 1;
+    for (let k = 0; k < cnt; k++) { const x = rng.int(s.x0 + 10, s.x1 - 10), y = rng.int(Math.round(skyH * .4), Math.round(skyH * 1.1)), rx = rng.int(10, 22), ry = rng.int(4, 7);
+      stampEllipse(x, y, rx, ry, (px, py) => { if (py < y) return; const i = idx(px, py); if (blocks[i] !== 0) return; blocks[i] = py === y ? B.GRASS : cellHash(seedNum + 11, px, py) < .25 ? B.FLOATORE : B.DIRT; layer[i] = 8; });
+      features.push({kind: 'islands', x, y, r: rx}); } }
+  lap('施設');
+
+  /* 7. 液体：地底湖と最深部の溶岩 */
+  const lakeCount = Math.round(10 * scale * (H / 600));
+  const visit = new Uint8Array(0);
+  for (let k = 0; k < lakeCount; k++) {
+    const x = rng.int(0, W - 1), s = rng.int(2, 5); let y = yInStrata(x, s);
+    if (blocks[idx(x, y)] !== 0) continue;
+    while (y < H - 1 && blocks[idx(x, y + 1)] === 0) y++;
+    const level = y - rng.int(2, 6), q = [idx(x, y)], seen = new Set(q), cells = [];
+    let ok = true;
+    while (q.length) { const i = q.pop(), px = i % W, py = (i / W) | 0; cells.push(i); if (cells.length > 2500 || py <= surf[px] + 2) { ok = false; break; }
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = px + dx, ny = py + dy; if (!inb(nx, ny) || ny < level) continue; const ni = idx(nx, ny); if (!seen.has(ni) && blocks[ni] === 0) { seen.add(ni); q.push(ni); } } }
+    if (ok) for (const i of cells) blocks[i] = B.WATER;
+  }
+  for (let x = 0; x < W; x++) for (let y = Math.round(H * .955); y < H; y++) { const i = idx(x, y); if (blocks[i] === 0) blocks[i] = B.LAVA; }
+  lap('液体');
+
+  /* 片付け：1ブロック幅の柱と浮き石を取り除く（通路の栓対策） */
+  let pillarsFound = 0, pillarsRemoved = 0, orePillars = 0;
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const i = y * W + x, id = blocks[i]; if (!isSolid[id] || y <= surf[x] + 1 || protectedBlk[id] || layer[i] === 8) continue;
+    if (passable[blocks[i - 1]] && passable[blocks[i + 1]] && blocks[i - 1] !== B.WATER && blocks[i + 1] !== B.WATER) {
+      pillarsFound++;
+      if (isOre[id]) { orePillars++; continue; }
+      blocks[i] = 0; pillarsRemoved++;
+    }
+  }
+  lap('片付け');
+
+  /* 8. 崩れやすさ */
+  const stab = new Uint8Array(N);
+  const air = new Int32Array((W + 1) * (H + 1)); // 空気の累積和
+  for (let y = 0; y < H; y++) { let row = 0; for (let x = 0; x < W; x++) { row += (!isSolid[blocks[y * W + x]] && y > surf[x]) ? 1 : 0; air[(y + 1) * (W + 1) + x + 1] = air[y * (W + 1) + x + 1] + row; } }
+  const R = 3, layerBase = [0, .45, .4, .25, .45, .1, .55, .6, .2];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = y * W + x, id = blocks[i]; if (!isSolid[id] || y < surf[x]) continue;
+    const x0 = Math.max(0, x - R), x1 = Math.min(W, x + R + 1), y0 = Math.max(0, y - R), y1 = Math.min(H, y + R + 1);
+    const a = air[y1 * (W + 1) + x1] - air[y0 * (W + 1) + x1] - air[y1 * (W + 1) + x0] + air[y0 * (W + 1) + x0];
+    const cav = a / ((x1 - x0) * (y1 - y0));
+    const v = layerBase[layer[i]] * .6 + BLOCKS[id].stab * .5 + cav * .9;
+    stab[i] = Math.max(0, Math.min(255, Math.round(v * 200))); }
+  lap('崩れやすさ');
+
+  world = {W, H, N, blocks, layer, surf, regionOf, bounds, spans, features, stab, cx, townW, tAvg, shaftX, skyH, surfaceBase, seed: seedStr, size: sizeKey};
+  /* 9. 検証 */
+  world.validation = validate(world);
+  world.pillars = {found: pillarsFound, removed: pillarsRemoved, ore: orePillars};
+  lap('検証');
+  T['合計'] = performance.now() - t0;
+  world.timing = T;
+  return world;
+}
+
+/* ---------------- 検証：町から歩いて行ける範囲 ---------------- */
+function validate(w) {
+  const {W, H, blocks, surf, cx} = w;
+  const winW = Math.min(W, 1600), x0 = Math.max(0, Math.min(W - winW, cx - (winW >> 1))), x1 = x0 + winW;
+  let maxB3 = 0; for (let x = x0; x < x1; x++) maxB3 = Math.max(maxB3, w.bounds[4][x]);
+  const y1 = Math.min(H - 1, maxB3 + 5), WH = winW * y1;
+  const J = 4; // ジャンプで上がれるブロック数（初速370・重力900 → 約76px ≒ 4ブロック）
+  const pass = (x, y) => x >= x0 && x < x1 && y >= 1 && y < y1 && passable[blocks[y * W + x]] && passable[blocks[(y - 1) * W + x]];
+  const climb = (x, y) => climbable[blocks[y * W + x]] || climbable[blocks[(y - 1) * W + x]];
+  const grounded = (x, y) => y + 1 >= y1 || !passable[blocks[(y + 1) * W + x]] || climb(x, y);
+  const li = (x, y) => y * winW + (x - x0);
+  const seen = new Uint8Array(WH), dist = new Uint16Array(WH).fill(65535);
+  let q = new Int32Array(1 << 20), qh = 0, qt = 0;
+  const push = (x, y, j, d) => { const c = li(x, y), bit = 1 << j; if (seen[c] & bit) return; seen[c] |= bit; if (d < dist[c]) dist[c] = d; if (qt + 3 >= q.length) { const nq = new Int32Array(q.length * 2); nq.set(q.subarray(qh, qt)); qt -= qh; qh = 0; q = nq; } q[qt++] = c; q[qt++] = j; q[qt++] = d; };
+  const sx = w.cx - 12; let sy = surf[sx] - 1; while (!pass(sx, sy) && sy > 2) sy--;
+  push(sx, sy, J, 0);
+  while (qh < qt) {
+    const c = q[qh++], j = q[qh++], d = q[qh++], x = (c % winW) + x0, y = (c / winW) | 0;
+    const g = grounded(x, y), cl = climb(x, y);
+    if (g) {
+      // 地面・はしご・水中：左右に歩く、1段の段差を自動で上る、ジャンプを始める
+      for (const dx of [-1, 1]) { const nx = x + dx;
+        if (pass(nx, y)) push(nx, y, grounded(nx, y) ? J : 0, d + 1);
+        else if (pass(nx, y - 1) && pass(x, y - 1)) push(nx, y - 1, J, d + 1); }
+      if (pass(x, y - 1)) push(x, y - 1, cl ? J : J - 1, d + 1);
+      if (cl && pass(x, y + 1)) push(x, y + 1, J, d + 1);
+    } else if (j > 0) {
+      // 上昇中：上か横へ（どちらも残りの上昇量を使う）
+      if (pass(x, y - 1)) push(x, y - 1, j - 1, d + 1);
+      for (const dx of [-1, 1]) if (pass(x + dx, y)) push(x + dx, y, j - 1, d + 1);
+      if (pass(x, y + 1)) push(x, y + 1, 0, d + 1);
+    } else {
+      // 落下中：真下か斜め下へ
+      if (pass(x, y + 1)) push(x, y + 1, 0, d + 1);
+      for (const dx of [-1, 1]) if (pass(x + dx, y + 1) && pass(x + dx, y)) push(x + dx, y + 1, 0, d + 1);
+    }
+  }
+  // 序盤の鉱石：歩いて行ける場所から2ブロック以内にあるか
+  const targets = {NATIVECU: B.NATIVECU, MALACHITE: B.MALACHITE, CASSITERITE: B.CASSITERITE};
+  const res = {};
+  for (const k in targets) res[k] = {id: targets[k], best: 65535, x: -1, y: -1, count: 0};
+  let reachable = 0; for (let c = 0; c < WH; c++) if (seen[c]) reachable++;
+  for (let y = 1; y < y1; y++) for (let x = x0; x < x1; x++) { const id = blocks[y * W + x];
+    for (const k in res) { const r = res[k]; if (id !== r.id) continue; let best = 65535;
+      for (let dy = -2; dy <= 3; dy++) for (let dx = -2; dx <= 2; dx++) { const px = x + dx, py = y + dy; if (px < x0 || px >= x1 || py < 1 || py >= y1) continue; const dd = dist[li(px, py)]; if (dd < best) best = dd; }
+      if (best < 65535) { r.count++; if (best < r.best) { r.best = best; r.x = x; r.y = y; } } } }
+  return {x0, x1, y1, winW, seen, dist, res, reachable, spawn: [sx, sy]};
+}
+
+/* ---------------- 描画 ---------------- */
+const canvas = $('view'), ctx = canvas.getContext('2d');
+let view = 'material', img = null, imgCanvas = document.createElement('canvas');
+let cam = {x: 0, y: 0, z: 1};
+
+function buildImage() {
+  const w = world, {W, H, blocks, layer, surf, stab} = w;
+  imgCanvas.width = W; imgCanvas.height = H;
+  const ictx = imgCanvas.getContext('2d');
+  const data = ictx.createImageData(W, H), px = data.data;
+  const regionRgb = REGIONS.map(r => hexRgb(r.color));
+  const strataRgb = STRATA.map(s => hexRgb(s.color));
+  const v = w.validation;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, id = blocks[i], o = i * 4, b = BLOCKS[id];
+    let r, g, bl;
+    const above = y < surf[x] && layer[i] !== 8;
+    if (id === 0) { if (above) { const t = y / surf[x]; r = 40 + 50 * t; g = 70 + 60 * t; bl = 110 + 70 * t; } else { r = 18; g = 19; bl = 25; } }
+    else [r, g, bl] = b.rgb;
+    if (view === 'region') {
+      const rr = regionRgb[w.regionOf[x]];
+      if (id === 0 && above) { r = rr[0] * .55 + 20; g = rr[1] * .55 + 20; bl = rr[2] * .55 + 20; }
+      else if (isSolid[id] || b.cat === 'liquid' || b.cat === 'plant') { if (y - surf[x] < 30 && layer[i] !== 8) { r = r * .45 + rr[0] * .55; g = g * .45 + rr[1] * .55; bl = bl * .45 + rr[2] * .55; } else { const m = (r + g + bl) / 3 * .5; r = g = bl = m; } }
+    } else if (view === 'strata') {
+      if (isSolid[id] && !above) { const s = strataRgb[layer[i]]; r = s[0]; g = s[1]; bl = s[2]; if (isOre[id]) { r = r * .7 + 60; g = g * .7 + 60; bl = bl * .7 + 60; } }
+      else if (id !== 0 && b.cat === 'liquid') { r *= .7; g *= .7; bl *= .7; }
+    } else if (view === 'ores') {
+      if (!isOre[id]) { if (id === 0) { r = above ? 26 : 8; g = above ? 30 : 8; bl = above ? 40 : 10; } else if (b.cat === 'liquid') { r = 20; g = 30; bl = 60; } else { r = g = bl = 34; } }
+    } else if (view === 'stability') {
+      if (isSolid[id] && !above) { const t = stab[i] / 255; r = Math.min(255, 40 + 420 * t); g = Math.min(255, 60 + 300 * t * (1 - t) * 2.2); bl = Math.max(0, 140 - 240 * t); }
+      else if (id === 0) { r = above ? 30 : 6; g = above ? 34 : 6; bl = above ? 44 : 8; }
+      else { r *= .3; g *= .3; bl *= .3; }
+    } else if (view === 'validate') {
+      r *= .45; g *= .45; bl *= .45;
+      if (x >= v.x0 && x < v.x1 && y < v.y1) { const c = y * v.winW + (x - v.x0); if (v.seen[c]) { r = r * .5 + 30; g = g * .5 + 150; bl = bl * .5 + 70; } }
+      if (id === B.NATIVECU || id === B.MALACHITE || id === B.CASSITERITE) [r, g, bl] = b.rgb;
+    }
+    px[o] = r; px[o + 1] = g; px[o + 2] = bl; px[o + 3] = 255;
+  }
+  ictx.putImageData(data, 0, 0);
+  if (view === 'validate') { ictx.strokeStyle = '#ffd27a'; ictx.lineWidth = Math.max(1, W / 800); ictx.strokeRect(v.x0 + .5, .5, v.winW - 1, v.y1 - 1); }
+}
+
+function resizeCanvas() {
+  const r = canvas.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
+  draw();
+}
+function fit() { if (!world) return; const z = Math.min(canvas.width / world.W, canvas.height / world.H); cam = {z, x: (world.W - canvas.width / z) / 2, y: (world.H - canvas.height / z) / 2}; draw(); }
+function toTown() { if (!world) return; const z = Math.max(2, canvas.height / 160); cam = {z, x: world.cx - canvas.width / z / 2, y: world.tAvg - canvas.height / z * .3}; draw(); }
+function draw() {
+  ctx.fillStyle = '#0b0d10'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (!world) return;
+  ctx.imageSmoothingEnabled = cam.z < 1;
+  ctx.setTransform(cam.z, 0, 0, cam.z, -cam.x * cam.z, -cam.y * cam.z);
+  ctx.drawImage(imgCanvas, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  // 地物の印
+  const toS = (x, y) => [(x - cam.x) * cam.z, (y - cam.y) * cam.z];
+  ctx.font = `${Math.round(12 * Math.min(2, window.devicePixelRatio || 1))}px system-ui`;
+  ctx.textBaseline = 'bottom';
+  const showLabels = cam.z >= 1.5 || (view === 'validate' && world.W <= 1600);
+  for (const f of world.features) {
+    if (f.kind === 'town' && view !== 'region' && view !== 'validate') continue;
+    const info = f.kind === 'pocket' ? POCKETS[f.type] : f.kind === 'town' ? {name: '鉱山町', color: '#ffd27a'} : STRUCTS[f.kind];
+    const [sx, sy] = toS(f.x, f.y), rr = Math.max(4, f.r * cam.z);
+    if (sx < -rr || sy < -rr || sx > canvas.width + rr || sy > canvas.height + rr) continue;
+    ctx.strokeStyle = info.color; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx, sy, rr, 0, Math.PI * 2); ctx.stroke();
+    if (showLabels) { ctx.fillStyle = '#000a'; const tw = ctx.measureText(info.name).width; ctx.fillRect(sx - tw / 2 - 3, sy - rr - 18, tw + 6, 17); ctx.fillStyle = info.color; ctx.textAlign = 'center'; ctx.fillText(info.name, sx, sy - rr - 3); }
+  }
+  if (view === 'region') { // 地域名
+    ctx.textAlign = 'center';
+    for (const s of world.spans) { const [sx] = toS((s.x0 + s.x1) / 2, 0), [, sy] = toS(0, world.skyH * .6); const wpx = (s.x1 - s.x0) * cam.z; if (wpx < 30) continue; ctx.fillStyle = '#000a'; const tw = ctx.measureText(s.r.name).width; ctx.fillRect(sx - tw / 2 - 3, sy - 17, tw + 6, 17); ctx.fillStyle = s.r.color; ctx.fillText(s.r.name, sx, sy - 2); }
+  }
+  if (view === 'validate') {
+    const v = world.validation;
+    for (const k in v.res) { const r = v.res[k]; if (r.x < 0) continue; const [sx, sy] = toS(r.x + .5, r.y + .5); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx, sy, Math.max(6, 3 * cam.z), 0, Math.PI * 2); ctx.stroke(); }
+    const [sx, sy] = toS(v.spawn[0] + .5, v.spawn[1]); ctx.fillStyle = '#ffd27a'; ctx.beginPath(); ctx.arc(sx, sy, Math.max(4, 2 * cam.z), 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+/* ---------------- UI ---------------- */
+function legend() {
+  const el = $('legend'); let items = [];
+  if (view === 'material' || view === 'ores' || view === 'validate') {
+    const used = new Set(); const cnt = world.counts;
+    for (const b of BLOCKS) if (b.id && cnt[b.id] && (view === 'material' || b.cat === 'ore')) used.add(b.id);
+    if (view === 'validate') items.push(['#3c9a5a', '町から歩いて行ける範囲'], ['#ffd27a', '検証した範囲（枠）・出発点'], ['#ffffff', '各鉱石で一番近いもの（白丸）']);
+    for (const id of used) items.push([BLOCKS[id].color, BLOCKS[id].name]);
+  } else if (view === 'region') { for (const r of REGIONS) items.push([r.color, r.name + ['（町）', '', '（大げさ）', '（架空）'][r.tier]]); }
+  else if (view === 'strata') { for (const s of STRATA.slice(1)) items.push([s.color, s.name]); }
+  else if (view === 'stability') { items.push(['#283c8c', '崩れにくい'], ['#c8a040', 'ふつう'], ['#ff3010', '崩れやすい']); }
+  if (view !== 'stability' && view !== 'strata') { for (const k in POCKETS) items.push([POCKETS[k].color, '◯ ' + POCKETS[k].name]); for (const k in STRUCTS) items.push([STRUCTS[k].color, '◯ ' + STRUCTS[k].name]); }
+  el.innerHTML = items.map(([c, n]) => `<div><span class="sw" style="background:${c}"></span>${n}</div>`).join('');
+}
+function stats() {
+  const w = world, {blocks, layer, N} = w;
+  const counts = new Uint32Array(NB), strataSolid = new Uint32Array(9);
+  for (let i = 0; i < N; i++) { counts[blocks[i]]++; if (isSolid[blocks[i]]) strataSolid[layer[i]]++; }
+  w.counts = counts;
+  const groups = {};
+  for (const b of BLOCKS) if (b.cat === 'ore') (groups[b.group] ||= []).push(b);
+  let html = '<table><tr><th>系統</th><th>鉱石</th><th class="n">ブロック数</th></tr>';
+  for (const g in groups) for (const b of groups[g]) html += `<tr><td>${g}</td><td><span class="sw" style="background:${b.color}"></span>${b.name}</td><td class="n">${counts[b.id].toLocaleString()}</td></tr>`;
+  $('oreStats').innerHTML = html + '</table>';
+  const v = w.validation, names = {NATIVECU: '自然銅', MALACHITE: '孔雀石', CASSITERITE: '錫石'};
+  let vh = `<p>検証範囲：横 ${v.winW} × 縦 ${v.y1}（町を中心に、深さ3の下端まで）／歩いて行けるマス ${v.reachable.toLocaleString()}</p><table><tr><th>序盤の鉱石</th><th class="n">一番近い（歩数）</th><th class="n">届く数</th><th>判定</th></tr>`;
+  let allOk = true;
+  for (const k in v.res) { const r = v.res[k], found = r.best < 65535; if (!found) allOk = false;
+    const judge = !found ? '<span class="ng">見つからない</span>' : r.best < 20 ? '<span class="warn">近すぎるかも</span>' : r.best > 400 ? '<span class="warn">遠いかも</span>' : '<span class="ok">OK</span>';
+    vh += `<tr><td>${names[k]}</td><td class="n">${found ? r.best : '—'}</td><td class="n">${r.count}</td><td>${judge}</td></tr>`; }
+  vh += '</table>';
+  const p = w.pillars;
+  vh += `<p>1ブロック幅の柱・浮き石：${p.found.toLocaleString()} 個見つけて、岩の ${p.removed.toLocaleString()} 個を取り除いた（鉱石の柱 ${p.ore} 個は残した）</p>`;
+  vh += `<p>総合：${allOk ? '<span class="ok">合格</span>（序盤の鉱石すべてに歩いて届く）' : '<span class="ng">不合格</span>'}</p>`;
+  $('validation').innerHTML = vh;
+  let sum = 0; for (let s = 1; s <= 7; s++) sum += strataSolid[s];
+  let oh = '<table><tr><th>地層</th><th class="n">岩の割合</th></tr>';
+  for (let s = 1; s <= 7; s++) oh += `<tr><td>${STRATA[s].name}</td><td class="n">${(strataSolid[s] / sum * 100).toFixed(1)}%</td></tr>`;
+  oh += '</table><table style="margin-top:8px"><tr><th>地物</th><th class="n">数</th></tr>';
+  const fc = {}; for (const f of w.features) { const n = f.kind === 'pocket' ? POCKETS[f.type].name : f.kind === 'town' ? '鉱山町' : STRUCTS[f.kind].name; fc[n] = (fc[n] || 0) + 1; }
+  for (const n in fc) oh += `<tr><td>${n}</td><td class="n">${fc[n]}</td></tr>`;
+  oh += '</table><table style="margin-top:8px"><tr><th>生成の工程</th><th class="n">ミリ秒</th></tr>';
+  for (const k in w.timing) oh += `<tr><td>${k}</td><td class="n">${w.timing[k].toFixed(0)}</td></tr>`;
+  $('otherStats').innerHTML = oh + '</table>';
+  window.__stats = {seed: w.seed, size: w.size, W: w.W, H: w.H, timing: w.timing, pillars: w.pillars,
+    early: Object.fromEntries(Object.entries(v.res).map(([k, r]) => [k, {best: r.best, count: r.count}])), reachable: v.reachable,
+    ores: Object.fromEntries(BLOCKS.filter(b => b.cat === 'ore').map(b => [b.name, counts[b.id]])),
+    strata: Array.from({length: 7}, (_, k) => +(strataSolid[k + 1] / sum * 100).toFixed(1)),
+    regions: w.spans.map(s => ({name: s.r.name, x0: s.x0, x1: s.x1})).sort((a, b) => a.x0 - b.x0),
+    features: fc};
+}
+function run() {
+  const seed = $('seed').value.trim() || 'komorebi', size = $('size').value;
+  $('status').textContent = '生成中…（本番相当は少し時間がかかります）';
+  const u = new URL(location.href); u.searchParams.set('seed', seed); u.searchParams.set('size', size); u.searchParams.set('view', view); history.replaceState(null, '', u);
+  setTimeout(() => {
+    try {
+      generate(seed, size); stats(); buildImage(); legend(); fit();
+      $('status').textContent = `生成完了：${world.W}×${world.H}、${world.timing['合計'].toFixed(0)} ミリ秒`;
+      window.__done = true;
+    } catch (e) { $('status').textContent = 'エラー：' + e.message; console.error(e); window.__error = String(e.stack || e); }
+  }, 30);
+}
+function setView(v) {
+  view = v; for (const b of document.querySelectorAll('#views button')) b.classList.toggle('on', b.dataset.view === v);
+  const u = new URL(location.href); u.searchParams.set('view', v); history.replaceState(null, '', u);
+  if (world) { buildImage(); legend(); draw(); }
+}
+$('gen').onclick = run;
+$('rand').onclick = () => { $('seed').value = Math.random().toString(36).slice(2, 8); run(); };
+for (const b of document.querySelectorAll('#views button')) b.onclick = () => setView(b.dataset.view);
+const zoomAt = (f, sx = canvas.width / 2, sy = canvas.height / 2) => { const wx = cam.x + sx / cam.z, wy = cam.y + sy / cam.z; cam.z = Math.max(.05, Math.min(40, cam.z * f)); cam.x = wx - sx / cam.z; cam.y = wy - sy / cam.z; draw(); };
+$('zoomIn').onclick = () => zoomAt(1.6); $('zoomOut').onclick = () => zoomAt(1 / 1.6); $('fit').onclick = fit; $('toTown').onclick = toTown;
+canvas.addEventListener('wheel', e => { e.preventDefault(); const r = canvas.getBoundingClientRect(), k = canvas.width / r.width; zoomAt(e.deltaY < 0 ? 1.25 : .8, (e.clientX - r.left) * k, (e.clientY - r.top) * k); }, {passive: false});
+let drag = null;
+canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); drag = {x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false}; canvas.classList.add('dragging'); });
+canvas.addEventListener('pointermove', e => { const r = canvas.getBoundingClientRect(), k = canvas.width / r.width;
+  if (drag) { const dx = (e.clientX - drag.x) * k, dy = (e.clientY - drag.y) * k; if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true; cam.x = drag.cx - dx / cam.z; cam.y = drag.cy - dy / cam.z; draw(); }
+  else if (e.pointerType === 'mouse') showInfo((e.clientX - r.left) * k, (e.clientY - r.top) * k); });
+canvas.addEventListener('pointerup', e => { const r = canvas.getBoundingClientRect(), k = canvas.width / r.width; if (drag && !drag.moved) showInfo((e.clientX - r.left) * k, (e.clientY - r.top) * k); drag = null; canvas.classList.remove('dragging'); });
+function showInfo(sx, sy) {
+  if (!world) return; const x = Math.floor(cam.x + sx / cam.z), y = Math.floor(cam.y + sy / cam.z);
+  if (x < 0 || y < 0 || x >= world.W || y >= world.H) { $('info').textContent = ''; return; }
+  const i = y * world.W + x, b = BLOCKS[world.blocks[i]], s = world.layer[i];
+  $('info').textContent = `(${x}, ${y})　${b.name}　／　地域：${REGIONS[world.regionOf[x]].name}　／　地層：${y < world.surf[x] && s !== 8 ? '地上' : STRATA[s].name}　／　崩れやすさ：${isSolid[world.blocks[i]] ? Math.round(world.stab[i] / 2.55) + '%' : '—'}`;
+}
+window.addEventListener('resize', resizeCanvas);
+const params = new URLSearchParams(location.search);
+if (params.get('seed')) $('seed').value = params.get('seed');
+if (params.get('size') && SIZES[params.get('size')]) $('size').value = params.get('size');
+if (params.get('view')) view = params.get('view');
+for (const b of document.querySelectorAll('#views button')) b.classList.toggle('on', b.dataset.view === view);
+resizeCanvas(); run();
+</script>
+</body>
+</html>
