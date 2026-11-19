@@ -11,6 +11,7 @@
   AI_API_KEY                                  … APIキー。Secrets に登録
   AI_KEY_HEADER                               … キーを渡すヘッダー名(既定 Authorization。専用ヘッダーのゲートウェイならその名前)
   AI_MODELS                                   … 「表示名=モデルID」をカンマ区切り(既定は下の DEFAULT_MODELS)
+  AI_CALL_INTERVAL                            … 呼び出しの間に空ける秒数(既定15。混雑しやすいゲートウェイ向け)
   MEETING_TOPIC / MEETING_ISSUE / MEETING_ROUNDS … 手動実行のときの入力
 Python標準ライブラリだけで動く。
 """
@@ -32,6 +33,9 @@ MEETING_LABEL = "AI会議"
 AGENDA_LABEL = "議題"
 MAX_ROUNDS = 3
 COMMENT_LIMIT = 60000          # GitHubのコメントの上限(65536文字)より少し小さく
+RETRY_WAITS = (20, 40, 80, 120)   # 混雑・時間切れのときのやり直しの間隔(秒)
+RETRYABLE = {408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524, 529}
+FAILED_MARKERS = ("(応答できませんでした", "(まとめを作れませんでした")   # 以前の版が書いた失敗のコメント
 FOOTER = "\n\n---\n<sub>AI会議の自動投稿です。決定はオーナーが行います。</sub>"
 
 
@@ -158,12 +162,15 @@ class GitHub:
 
 
 class Models:
-    def __init__(self, base: str, key: str, header: str = "Authorization", opener=urllib.request.urlopen, sleep=time.sleep):
+    def __init__(self, base: str, key: str, header: str = "Authorization", opener=urllib.request.urlopen, sleep=time.sleep,
+                 interval: float = 15, clock=time.monotonic):
         if not base or not key:
             raise MeetingError("AI_API_BASE と AI_API_KEY を、リポジトリの Secrets に登録してください")
         if any(c.isspace() or ord(c) < 32 for c in key):
             raise MeetingError("AI_API_KEY に改行や空白が混ざっています(キー1行だけにしてください)")
-        self.base, self.opener, self.sleep = base.rstrip("/"), opener, sleep
+        self.base, self.opener, self.sleep, self.clock = base.rstrip("/"), opener, sleep, clock
+        self.interval = max(0.0, interval)
+        self._last_call: float | None = None
         header = header or "Authorization"
         self.headers = {"Authorization": f"Bearer {key}"} if header.lower() == "authorization" else {header: key}
 
@@ -185,10 +192,16 @@ class Models:
         body = json.dumps({"model": model, "messages": [{"role": "system", "content": system},
                                                         {"role": "user", "content": user}]}).encode("utf-8")
         last = "不明なエラー"
-        for attempt in range(3):
+        for attempt in range(len(RETRY_WAITS) + 1):
+            if self._last_call is not None:   # 短い間隔で続けて送ると、回数・量の制限に当たりやすい
+                wait = self.interval - (self.clock() - self._last_call)
+                if wait > 0:
+                    self.sleep(wait)
+            self._last_call = self.clock()
             request = urllib.request.Request(f"{self.base}/chat/completions", data=body, method="POST",
                                              headers={**self.headers, "Content-Type": "application/json",
                                                       "User-Agent": "ai-meeting"})
+            retry_after = None
             try:
                 with self.opener(request, timeout=240) as response:
                     payload = json.loads(response.read().decode("utf-8"))
@@ -200,14 +213,19 @@ class Models:
                 last = "空の返答"
             except urllib.error.HTTPError as error:   # 本文にはキーの一部が入ることがあるので、番号だけ残す
                 last = f"HTTP {error.code}"
-                if error.code not in (408, 429, 500, 502, 503, 504):
+                if error.code not in RETRYABLE:
                     break
+                retry_after = (error.headers or {}).get("Retry-After") if hasattr(error, "headers") else None
             except (urllib.error.URLError, TimeoutError, OSError) as error:
                 last = f"接続できません({type(error).__name__})"
             except (KeyError, IndexError, TypeError, ValueError):
                 last = "返答の形式が想定と違います"
                 break
-            self.sleep(5 * (attempt + 1))
+            if attempt < len(RETRY_WAITS):
+                wait = RETRY_WAITS[attempt]
+                if retry_after and str(retry_after).isdigit():   # 「何秒後に」と言われたらそれに従う(最大5分)
+                    wait = max(wait, min(int(retry_after), 300))
+                self.sleep(wait)
         raise MeetingError(last)
 
 
@@ -227,6 +245,8 @@ def system_prompt(agents_md: str, name: str, others: list[str]) -> str:
 def transcript(issue: dict, comments: list[dict]) -> str:
     parts = [f"## 議題(Issue #{issue['number']}): {issue['title']}\n{issue.get('body') or ''}"]
     for c in comments:
+        if any(marker in (c.get("body") or "") for marker in FAILED_MARKERS):
+            continue
         who = "オーナー" if c.get("user", {}).get("type") != "Bot" and "AI会議の自動投稿" not in (c.get("body") or "") else "AI"
         parts.append(f"### コメント({who})\n{c.get('body') or ''}")
     return "\n\n".join(parts)
@@ -242,76 +262,107 @@ def run(env: dict, github: GitHub, models: Models, docs_root: Path = ROOT, log=p
     github.ensure_label(MEETING_LABEL, "8957e5", "AI同士の会議(自動投稿)")
     github.ensure_label(AGENDA_LABEL, "fbca04", "AI会議で話したい議題")
 
-    # 議題を決める
+    # 議題を決める。新しいIssueは、1周目で十分な意見が集まってから作る(失敗だけのIssueを残さない)
     topic = (env.get("MEETING_TOPIC") or "").strip()
     number = (env.get("MEETING_ISSUE") or "").strip().lstrip("#")
+    issue: dict | None = None
     if number:
         issue = github.issue(int(number))
-        github.add_labels(issue["number"], [MEETING_LABEL])
-    elif topic:
-        issue = github.create_issue(f"[AI会議] {topic}", issue_body(topic), [MEETING_LABEL])
-    else:
+    elif not topic:
         discussed = github.issues(MEETING_LABEL)
         waiting = [i for i in github.issues(AGENDA_LABEL, state="open")
                    if MEETING_LABEL not in [label["name"] for label in i.get("labels", [])]]
         if waiting:
             issue = waiting[0]
-            github.add_labels(issue["number"], [MEETING_LABEL])
         else:
             titles = [i["title"] for i in discussed]
             candidates = [item for item in open_items(design) if not already_discussed(item, titles)]
             if not candidates:
                 log("議題がありません(未決事項はすべて会議済みです)。議題を指定して実行してください。")
-                return {"issue": None, "comments": 0}
-            issue = github.create_issue(f"[AI会議] {candidates[0]}", issue_body(candidates[0]), [MEETING_LABEL])
-    log(f"議題: #{issue['number']} {issue['title']}")
+                return {"issue": None, "comments": 0, "skipped": []}
+            topic = candidates[0]
+    draft = issue or {"number": "新規", "title": f"[AI会議] {topic}", "body": issue_body(topic)}
+    log(f"議題: {draft['title']}")
 
     docs = f"## docs/design.md\n{design}\n\n## docs/decisions.md\n{decisions}"
-    posted = 0
     names = [n for n, _ in participants]
-    for round_no in range(1, rounds + 1):
-        answered = 0
+    skipped: list[str] = []
+
+    def ask(name: str, model: str, comments: list[dict], instruction: str, role: str = "") -> str | None:
+        try:
+            return models.chat(model, system_prompt(agents, name + role, [n for n in names if n != name]),
+                               f"{docs}\n\n{transcript(draft, comments)}\n\n---\n{instruction}")
+        except MeetingError as error:
+            log(f"{name} は応答できませんでした: {error}")
+            return None
+
+    # 1周目は、まず全員の意見を集めてから投稿する
+    earlier = github.comments(issue["number"]) if issue else []
+    first: list[str] = []
+    for name, model in participants:
+        so_far = earlier + [{"body": b, "user": {"type": "Bot"}} for b in first]
+        text = ask(name, model, so_far, "この議題について、最初の意見を述べてください。")
+        if text is None:
+            skipped.append(f"{name}(1周目)")
+            continue
+        first.append(f"### 🤖 {name}(`{model}`)・1周目\n\n{text}")
+        log(f"1周目: {name} が答えました")
+    needed = min(2, len(participants))
+    if len(first) < needed:
+        raise MeetingError(f"1周目に答えられたモデルが{len(first)}つだけだったため、会議を開きませんでした。"
+                           "ゲートウェイが混雑している可能性があります。少し時間をおいて開き直してください")
+
+    if issue is None:
+        issue = github.create_issue(draft["title"], draft["body"], [MEETING_LABEL])
+    else:
+        github.add_labels(issue["number"], [MEETING_LABEL])
+    draft = issue
+    for body in first:
+        github.comment(issue["number"], body[:COMMENT_LIMIT] + FOOTER)
+    posted = len(first)
+    log(f"議題: #{issue['number']} に1周目を投稿しました")
+
+    for round_no in range(2, rounds + 1):
         for name, model in participants:
-            comments = github.comments(issue["number"])
-            ask = ("この議題について、最初の意見を述べてください。" if round_no == 1 else
-                   f"{round_no}周目です。ほかの参加者の意見を読み、同意・反論・補足を明示してください。"
-                   "すでに出た内容の繰り返しは避け、論点を深めてください。")
-            try:
-                text = models.chat(model, system_prompt(agents, name, [n for n in names if n != name]),
-                                   f"{docs}\n\n{transcript(issue, comments)}\n\n---\n{ask}")
-                body = f"### 🤖 {name}(`{model}`)・{round_no}周目\n\n{text}"
-                answered += 1
-            except MeetingError as error:
-                body = f"### 🤖 {name}(`{model}`)・{round_no}周目\n\n(応答できませんでした: {error})"
-            github.comment(issue["number"], body[:COMMENT_LIMIT] + FOOTER)
+            text = ask(name, model, github.comments(issue["number"]),
+                       f"{round_no}周目です。ほかの参加者の意見を読み、同意・反論・補足を明示してください。"
+                       "すでに出た内容の繰り返しは避け、論点を深めてください。")
+            if text is None:
+                skipped.append(f"{name}({round_no}周目)")
+                continue
+            github.comment(issue["number"], f"### 🤖 {name}(`{model}`)・{round_no}周目\n\n{text}"[:COMMENT_LIMIT] + FOOTER)
             posted += 1
             log(f"{round_no}周目: {name} が投稿しました")
-        if round_no == 1 and not answered:
-            raise MeetingError("どのモデルも応答できませんでした。AI_API_BASE・AI_API_KEY・AI_MODELS を確認してください")
 
-    # まとめ
-    name, model = participants[0]
+    # まとめ(まとめ役が答えられなければ、次のモデルに頼む)
+    instruction = ("ここまでの議論を、オーナーが判断しやすいように整理してください。次の見出しで書きます。\n"
+                   "### 合意できた点\n### 意見が分かれた点(誰がどの立場か)\n### オーナーに決めてほしいこと(選択肢と、それぞれの影響)\n"
+                   "### decisions.md に書くならこの形(案)\n新しい意見は足さないでください。")
+    note = f"\n\n<sub>混雑などで参加できなかった回: {'、'.join(skipped)}</sub>" if skipped else ""
     comments = github.comments(issue["number"])
-    ask = ("ここまでの議論を、オーナーが判断しやすいように整理してください。次の見出しで書きます。\n"
-           "### 合意できた点\n### 意見が分かれた点(誰がどの立場か)\n### オーナーに決めてほしいこと(選択肢と、それぞれの影響)\n"
-           "### decisions.md に書くならこの形(案)\n新しい意見は足さないでください。")
-    try:
-        text = models.chat(model, system_prompt(agents, f"{name}(まとめ役)", [n for n in names if n != name]),
-                           f"{docs}\n\n{transcript(issue, comments)}\n\n---\n{ask}")
-        github.comment(issue["number"], (f"## 📝 まとめ({name})\n\n{text}")[:COMMENT_LIMIT] + FOOTER)
-        posted += 1
-    except MeetingError as error:
-        github.comment(issue["number"], f"## 📝 まとめ\n\n(まとめを作れませんでした: {error})" + FOOTER)
+    for name, model in participants:
+        text = ask(name, model, comments, instruction, role="(まとめ役)")
+        if text is not None:
+            github.comment(issue["number"], (f"## 📝 まとめ({name})\n\n{text}")[:COMMENT_LIMIT] + note + FOOTER)
+            posted += 1
+            break
+    else:
+        github.comment(issue["number"], "## 📝 まとめ\n\nまとめを作れませんでした(混雑のため)。"
+                       f"「続きの会議をするIssue番号」に {issue['number']} を入れ、周回数1で開き直すと、続きから会議できます。" + note + FOOTER)
         posted += 1
     log(f"会議が終わりました: #{issue['number']}({posted}件のコメント)")
-    return {"issue": issue["number"], "comments": posted}
+    return {"issue": issue["number"], "comments": posted, "skipped": skipped}
 
 
 def main() -> int:
     env = dict(os.environ)
     try:
         github = GitHub(env.get("GITHUB_TOKEN", ""), env.get("GITHUB_REPOSITORY", ""), env.get("GITHUB_API_URL", "https://api.github.com"))
-        models = Models(env.get("AI_API_BASE", ""), env.get("AI_API_KEY", ""), env.get("AI_KEY_HEADER", ""))
+        try:
+            interval = float(env.get("AI_CALL_INTERVAL") or 15)
+        except ValueError:
+            interval = 15
+        models = Models(env.get("AI_API_BASE", ""), env.get("AI_API_KEY", ""), env.get("AI_KEY_HEADER", ""), interval=interval)
         models.check()
         run(env, github, models)
         return 0
