@@ -42,7 +42,7 @@ MEETING_LABEL = "AI会議"
 AGENDA_LABEL = "議題"
 MAX_ROUNDS = 3
 COMMENT_LIMIT = 60000          # GitHubのコメントの上限(65536文字)より少し小さく
-RETRY_WAITS = (20, 40, 80, 120)   # 混雑・時間切れのときのやり直しの間隔(秒)
+RETRY_WAITS = (15, 45)   # 混雑・時間切れのときのやり直しの間隔(秒)。長く待つより、その席を飛ばして会議を進める
 RETRYABLE = {408, 409, 425, 429, 500, 502, 503, 504, 520, 522, 524, 529}
 FAILED_MARKERS = ("(応答できませんでした", "(まとめを作れませんでした")   # 以前の版が書いた失敗のコメント
 FOOTER = "\n\n---\n<sub>AI会議の自動投稿です。決定はオーナーが行います。</sub>"
@@ -247,7 +247,7 @@ class Models:
                                                       "User-Agent": "ai-meeting"})
             retry_after = None
             try:
-                with self.opener(request, timeout=240) as response:
+                with self.opener(request, timeout=180) as response:
                     payload = json.loads(response.read().decode("utf-8"))
                 content = payload["choices"][0]["message"]["content"]
                 if isinstance(content, list):
@@ -267,8 +267,8 @@ class Models:
                 break
             if attempt < len(RETRY_WAITS):
                 wait = RETRY_WAITS[attempt]
-                if retry_after and str(retry_after).isdigit():   # 「何秒後に」と言われたらそれに従う(最大5分)
-                    wait = max(wait, min(int(retry_after), 300))
+                if retry_after and str(retry_after).isdigit():   # 「何秒後に」と言われたらそれに従う(最大2分)
+                    wait = max(wait, min(int(retry_after), 120))
                 print(f"  {model}: {last}、{wait}秒後にやり直し", flush=True)
                 self.sleep(wait)
         raise MeetingError(last)
@@ -484,10 +484,10 @@ def run(env: dict, github: GitHub, models: Models, docs_root: Path = ROOT, log=p
             continue
         first.append(f"### 🤖 {name}(`{model}`)・1周目\n\n{text}")
         log(f"1周目: {name} が答えました")
-    needed = min(2, len(participants))
-    if len(first) < needed:
-        raise MeetingError(f"1周目に答えられたモデルが{len(first)}つだけだったため、会議を開きませんでした。"
-                           "ゲートウェイが混雑している可能性があります。少し時間をおいて開き直してください")
+    # 1人でも答えられれば会議を開く(答えを捨てない)。誰も答えられなければIssueを作らずに止める
+    if not first:
+        raise MeetingError("1周目に誰も答えられなかったため、会議を開きませんでした。"
+                           "混雑している可能性があります。少し時間をおいて開き直してください")
 
     if issue is None:
         issue = github.create_issue(draft["title"], draft["body"], [MEETING_LABEL])
