@@ -38,11 +38,13 @@ Settings → Secrets and variables → Actions で登録する。
 | Secret | `AI_API_KEY` | APIキー |
 | Variable | `AI_KEY_HEADER` | キーを渡すヘッダー名(`Authorization` 以外のときだけ) |
 | Variable | `AI_MODELS` | 任意。`表示名=モデルID` をカンマ区切り(省略時は Claude / GPT / Gemini) |
+| Variable | `AI_SUMMARY_EFFORT` | 任意。まとめ役のときだけ使うエフォート(例：`high`) |
 | Secret | `GEMINI_API_KEY` など | 任意。ゲートウェイを通さず公式APIを使うときの、その会社のキー(`GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `MISTRAL_API_KEY`) |
 | Variable | `AI_CALL_INTERVAL` | 任意。呼び出しの間に空ける秒数(既定15)。混雑で参加できないモデルが多いときに増やす |
 
 - 公式APIを直接使う：`AI_MODELS` のモデルIDの前に会社名を付ける。例：`Claude=claude-opus-5.5,GPT=gpt-6.1-sol,Gemini=gemini:gemini-4-neon`(GeminiだけGoogleの公式API、ほかはゲートウェイ)。付けられるのは `gemini:` `openai:` `anthropic:` `mistral:`。全員を公式APIにすれば、`AI_API_BASE` / `AI_API_KEY` は要らない
 - Geminiの公式APIのキーは Google AI Studio で発行する(AI Pro のログインは使わない)
+- 考える量(エフォート)：`AI_MODELS` のモデルIDの後ろに `@low` `@medium` `@high` などを付ける。例：`Claude=claude-opus-5.5@medium,GPT=gpt-6.1-sol@medium,Gemini=gemini:gemini-4-argon@medium`。下げると、費用(Geminiの公式API)と時間切れ(ゲートウェイの504など)が減る。まとめ役だけ上げたいときは `AI_SUMMARY_EFFORT=high`。付けなければモデルの既定のまま。エフォートに対応していない入口だとエラーになるので、そのときはそのモデルだけ外す
 - 仕組み：`.github/workflows/ai-meeting.yml` と `tools/ai_meeting.py`(Python標準ライブラリだけ)
 - AIはIssueにコメントするだけで、ファイルは変更しない(ワークフローの権限も読み取りのみ)
 - キーが受け付けられないときは、Issueを作らずに止まる

@@ -10,6 +10,7 @@ name: AI会議
 #   Variables : AI_KEY_HEADER(キーを渡すヘッダー名。Authorization 以外のときだけ)
 #               AI_MODELS(任意。「表示名=モデルID」をカンマ区切り。省略時は Claude / GPT / Gemini の3つ)
 #               AI_CALL_INTERVAL(任意。呼び出しの間に空ける秒数。既定15。混雑で失敗が多いときに増やす)
+#               AI_SUMMARY_EFFORT(任意。まとめ役のときだけ使うエフォート。例: high)
 #
 # AIはIssueにコメントするだけで、ファイルは変更しない(permissions も contents: read)。
 
@@ -63,6 +64,7 @@ jobs:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           AI_MODELS: ${{ vars.AI_MODELS }}
           AI_CALL_INTERVAL: ${{ vars.AI_CALL_INTERVAL }}
+          AI_SUMMARY_EFFORT: ${{ vars.AI_SUMMARY_EFFORT }}
           # 入力は環境変数で渡す(スクリプトに直接埋め込まない)
           MEETING_TOPIC: ${{ inputs.topic }}
           MEETING_ISSUE: ${{ inputs.issue }}

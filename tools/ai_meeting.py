@@ -13,6 +13,9 @@
   AI_MODELS                                   … 「表示名=モデルID」をカンマ区切り(既定は下の DEFAULT_MODELS)
                                                 モデルIDの前に「gemini:」「openai:」「anthropic:」「mistral:」を付けると、
                                                 ゲートウェイを通さず、その会社の公式APIを直接使う(例: Gemini=gemini:gemini-4-neon)
+                                                モデルIDの後ろに「@low」「@medium」「@high」などを付けると、考える量(エフォート)を指定する
+                                                (例: Gemini=gemini:gemini-4-argon@medium)。付けなければモデルの既定のまま
+  AI_SUMMARY_EFFORT                           … まとめ役のときだけ使うエフォート(任意。例: high)
   GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / MISTRAL_API_KEY
                                               … 公式APIを直接使うときのキー。使う会社のぶんだけ Secrets に登録
                                                 (ゲートウェイを使うモデルがなければ、AI_API_BASE / AI_API_KEY は不要)
@@ -64,14 +67,30 @@ def parse_models(text: str) -> list[tuple[str, str]]:
         name, _, model = part.partition("=")
         if not name.strip() or not model.strip():
             raise MeetingError(f"AI_MODELS の書き方が違います: {part!r}(「表示名=モデルID」をカンマ区切りで)")
+        split_effort(model)   # エフォートの書き方を、会議を始める前に確かめる
         models.append((name.strip(), model.strip()))
     if not 2 <= len(models) <= 5:
         raise MeetingError("参加モデルは2〜5個にしてください")
     return models
 
 
+EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
+
+
+def split_effort(spec: str) -> tuple[str, str | None]:
+    """「gemini:gemini-4-argon@medium」→ ("gemini:gemini-4-argon", "medium")。「@」がなければエフォートは None。"""
+    head, sep, effort = spec.strip().rpartition("@")
+    if not sep:
+        return spec.strip(), None
+    effort = effort.strip().lower()
+    if effort not in EFFORTS:
+        raise MeetingError(f"エフォートの書き方が違います: {spec!r}(使えるのは {' / '.join(EFFORTS)})")
+    return head.strip(), effort
+
+
 def split_model(spec: str) -> tuple[str, str]:
-    """「gemini:gemini-4-neon」→ ("gemini", "gemini-4-neon")。会社名がなければゲートウェイ("", モデルID)。"""
+    """「gemini:gemini-4-neon@low」→ ("gemini", "gemini-4-neon")。会社名がなければゲートウェイ("", モデルID)。"""
+    spec, _ = split_effort(spec)
     provider, sep, model = spec.partition(":")
     if sep and provider.strip().lower() in PROVIDERS and model.strip():
         return provider.strip().lower(), model.strip()
@@ -209,9 +228,12 @@ class Models:
         except (urllib.error.URLError, TimeoutError, OSError) as error:
             raise MeetingError(f"AI_API_BASE に接続できません({type(error).__name__})") from error
 
-    def chat(self, model: str, system: str, user: str) -> str:
-        body = json.dumps({"model": model, "messages": [{"role": "system", "content": system},
-                                                        {"role": "user", "content": user}]}).encode("utf-8")
+    def chat(self, model: str, system: str, user: str, effort: str | None = None) -> str:
+        payload_in = {"model": model, "messages": [{"role": "system", "content": system},
+                                                   {"role": "user", "content": user}]}
+        if effort:   # 指定したときだけ送る(対応していない入口もあるため)
+            payload_in["reasoning_effort"] = effort
+        body = json.dumps(payload_in).encode("utf-8")
         last = "不明なエラー"
         for attempt in range(len(RETRY_WAITS) + 1):
             if self._last_call is not None:   # 短い間隔で続けて送ると、回数・量の制限に当たりやすい
@@ -278,8 +300,11 @@ class Router:
             if not provider or PROVIDERS[provider]["check"]:
                 route.check()
 
-    def chat(self, spec: str, system: str, user: str) -> str:
+    def chat(self, spec: str, system: str, user: str, effort: str | None = None) -> str:
         provider, model = split_model(spec)
+        effort = effort or split_effort(spec)[1]
+        if effort:
+            return self.routes[provider].chat(model, system, user, effort=effort)
         return self.routes[provider].chat(model, system, user)
 
 
@@ -342,10 +367,11 @@ def run(env: dict, github: GitHub, models: Models, docs_root: Path = ROOT, log=p
     names = [n for n, _ in participants]
     skipped: list[str] = []
 
-    def ask(name: str, model: str, comments: list[dict], instruction: str, role: str = "") -> str | None:
+    def ask(name: str, model: str, comments: list[dict], instruction: str, role: str = "", effort: str | None = None) -> str | None:
+        extra = {"effort": effort} if effort else {}
         try:
             return models.chat(model, system_prompt(agents, name + role, [n for n in names if n != name]),
-                               f"{docs}\n\n{transcript(draft, comments)}\n\n---\n{instruction}")
+                               f"{docs}\n\n{transcript(draft, comments)}\n\n---\n{instruction}", **extra)
         except MeetingError as error:
             log(f"{name} は応答できませんでした: {error}")
             return None
@@ -393,9 +419,10 @@ def run(env: dict, github: GitHub, models: Models, docs_root: Path = ROOT, log=p
                    "### 合意できた点\n### 意見が分かれた点(誰がどの立場か)\n### オーナーに決めてほしいこと(選択肢と、それぞれの影響)\n"
                    "### decisions.md に書くならこの形(案)\n新しい意見は足さないでください。")
     note = f"\n\n<sub>混雑などで参加できなかった回: {'、'.join(skipped)}</sub>" if skipped else ""
+    summary_effort = split_effort("x@" + env["AI_SUMMARY_EFFORT"].strip())[1] if (env.get("AI_SUMMARY_EFFORT") or "").strip() else None
     comments = github.comments(issue["number"])
     for name, model in participants:
-        text = ask(name, model, comments, instruction, role="(まとめ役)")
+        text = ask(name, model, comments, instruction, role="(まとめ役)", effort=summary_effort)
         if text is not None:
             github.comment(issue["number"], (f"## 📝 まとめ({name})\n\n{text}")[:COMMENT_LIMIT] + note + FOOTER)
             posted += 1
