@@ -120,12 +120,18 @@ class MeetingTests(unittest.TestCase):
         self.assertIn("参加できなかった回: GPT(1周目)、GPT(2周目)", gh.posted[-1][1])     # まとめに1行だけ残す
         self.assertEqual(result["skipped"], ["GPT(1周目)", "GPT(2周目)"])
 
-    def test_too_few_answers_in_the_first_round_creates_no_issue(self):
-        for fail in ({"c", "g", "ge"}, {"c", "g"}):
-            gh = FakeGitHub()
-            with self.assertRaises(m.MeetingError):
-                self.run_meeting(gh, FakeModels(fail=fail), MEETING_TOPIC="x")
-            self.assertEqual((gh.created, gh.posted), ([], []))
+    def test_no_answers_in_the_first_round_creates_no_issue(self):
+        gh = FakeGitHub()
+        with self.assertRaises(m.MeetingError):
+            self.run_meeting(gh, FakeModels(fail={"c", "g", "ge"}), MEETING_TOPIC="x")
+        self.assertEqual((gh.created, gh.posted), ([], []))
+
+    def test_one_answer_is_enough_to_hold_the_meeting(self):
+        gh = FakeGitHub()
+        result = self.run_meeting(gh, FakeModels(fail={"c", "g"}), MEETING_TOPIC="x", MEETING_ROUNDS="1")
+        self.assertEqual(len(gh.created), 1)
+        self.assertEqual(len(gh.posted), 2)                 # 答えた1人の意見 + まとめ
+        self.assertIn("Claude(1周目)", result["skipped"])
 
     def test_summary_falls_back_to_the_next_model(self):
         class SummaryFails(FakeModels):
@@ -164,7 +170,7 @@ class MeetingTests(unittest.TestCase):
             return Ok()
         models = m.Models("https://x/v1", "k", opener=opener, sleep=waits.append, interval=0)
         self.assertEqual(models.chat("m", "s", "u"), "意見")
-        self.assertEqual(waits, [90, 40])        # 1回目は Retry-After(90秒)、2回目は既定の40秒
+        self.assertEqual(waits, [90, 45])        # 1回目は Retry-After(90秒)、2回目は既定の45秒
 
         def always_busy(request, timeout):
             raise urllib.error.HTTPError(request.full_url, 429, "busy", {}, io.BytesIO(b""))
