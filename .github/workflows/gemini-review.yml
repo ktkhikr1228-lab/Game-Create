@@ -134,8 +134,9 @@ jobs:
           printf '%s\n' "${GEMINI_ERRORS}" | tail -n 80
           if [[ -f .gemini/telemetry.log ]]; then
             echo '::: Tool calls :::'
-            grep -o '"function_name":"[^"]*"\|"success":[a-z]*\|"error":"[^"]\{0,300\}' .gemini/telemetry.log | head -n 100 || true
+            grep -o '"gemini_cli\.[a-z_.]*"' .gemini/telemetry.log | sort | uniq -c || true
+            grep -o '"function_name": *"[^"]*"\|"success": *[a-z]*\|"error": *"[^"]\{0,300\}' .gemini/telemetry.log | head -n 100 || true
           fi
         env:
-          GEMINI_RESPONSE: '${{ steps.gemini_review.outputs.gemini_response }}'
-          GEMINI_ERRORS: '${{ steps.gemini_review.outputs.gemini_errors }}'
+          GEMINI_RESPONSE: '${{ steps.gemini_review.outputs.summary }}'
+          GEMINI_ERRORS: '${{ steps.gemini_review.outputs.error }}'
