@@ -53,6 +53,20 @@ jobs:
           # コメントの「/review」の後ろに書いた内容を、追加の指示として渡す（入力は環境変数経由で渡し、スクリプトに埋め込まない）
           ADDITIONAL_CONTEXT: 'レビューは日本語で書いてください。リポジトリの AGENTS.md（GEMINI.md から読み込まれる）のルールも踏まえてください。 ${{ github.event.comment.body }}'
 
+      # code-review 拡張は、ふつうの git で先に取ってきてローカルパスから入れる。
+      # Gemini CLI に GitHub の URL を直接渡すと、ランナーの GIT_CONFIG_SYSTEM のせいで
+      # clone が「allowUnsafeConfigPaths」エラーで失敗するため（2026-11-20 に発生）。
+      # 中身が勝手に変わらないよう、コミットを固定する。更新するときはこの SHA を変える
+      - name: 'Fetch code-review extension'
+        run: |-
+          git init -q "${EXT_DIR}"
+          git -C "${EXT_DIR}" fetch -q --depth 1 https://github.com/gemini-cli-extensions/code-review "${EXT_SHA}"
+          git -C "${EXT_DIR}" checkout -q FETCH_HEAD
+          rm -rf "${EXT_DIR}/.git"
+        env:
+          EXT_DIR: '${{ runner.temp }}/code-review'
+          EXT_SHA: 'dd1a10d2c9d07b2ebade866590fdfa59cd8f9d04'
+
       - name: 'Run Gemini pull request review'
         uses: 'google-github-actions/run-gemini-cli@v0'
         env:
@@ -97,6 +111,6 @@ jobs:
             }
           extensions: |
             [
-              "https://github.com/gemini-cli-extensions/code-review"
+              "${{ runner.temp }}/code-review"
             ]
           prompt: '/pr-code-review'
