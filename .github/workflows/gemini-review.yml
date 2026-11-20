@@ -115,9 +115,12 @@ jobs:
                 }
               },
               "tools": {
-                "core": []
+                "core": ["activate_skill"]
               }
             }
+          # 組み込みの道具は activate_skill（拡張の SKILL.md を読み込むだけ）以外すべて無効。
+          # レビュー手順が「code-review-commons スキルを有効にして」と指示するため、これがないと
+          # モデルが存在しない道具を呼ぼうとして MALFORMED_FUNCTION_CALL で止まる（2026-11-20 に発生）
           extensions: |
             [
               "${{ runner.temp }}/code-review"
