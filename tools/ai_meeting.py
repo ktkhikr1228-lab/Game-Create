@@ -2,6 +2,7 @@
 
 - 議題: 指定があればそれ。なければ「議題」ラベルの開いたIssue → docs/design.md の未決事項のうち、まだ会議していないもの
 - 参加者: AI_MODELS の各モデルが、AGENTS.md の会議ルールに沿って順にコメントする。2周目以降は反論・補足
+- 資料: design.md は、議題に関係する節は本文まるごと、それ以外は見出しと「確定」の行だけを渡す(元の文の切り出しで、要約はしない)
 - 最後に1つのモデルが論点を整理し、「オーナーに決めてほしいこと」を書く
 - AIはファイルを変更しない(Issueへのコメントだけ)。決定とファイルへの反映はオーナーが行う
 
@@ -268,6 +269,7 @@ class Models:
                 wait = RETRY_WAITS[attempt]
                 if retry_after and str(retry_after).isdigit():   # 「何秒後に」と言われたらそれに従う(最大5分)
                     wait = max(wait, min(int(retry_after), 300))
+                print(f"  {model}: {last}、{wait}秒後にやり直し", flush=True)
                 self.sleep(wait)
         raise MeetingError(last)
 
@@ -309,6 +311,96 @@ class Router:
 
 
 # ---------- 会議 ----------
+STOPWORDS = {"AI", "AI会議", "会議", "議題", "確定", "未決", "整理", "方針", "仕様", "どうする", "決める", "について",
+             "それとも", "するか", "どちら", "ゲーム", "案", "一旦"}
+BRIEF_BUDGET = 20000   # design.md から本文まるごと渡す節の合計の上限(文字)
+
+
+def topic_terms(text: str) -> list[str]:
+    """議題の文から、design.md の見出しや本文と照らし合わせる言葉(漢字・カタカナ・英数字の2文字以上のまとまり)を取り出す。"""
+    terms = []
+    # 漢字・カタカナ・英数字は別々のまとまりにする(「バイオーム仕様」→「バイオーム」「仕様」)
+    for word in re.findall(r"[0-9]+[一-龥々]|[一-龥々]{2,}|[ァ-ヴー]{2,}|[A-Za-z0-9]{2,}", text or ""):
+        if word not in STOPWORDS and word not in terms:
+            terms.append(word)
+    return terms
+
+
+def split_sections(text: str) -> list[tuple[str, str]]:
+    """「## 」「### 」の見出しで区切る。[(見出し行, 本文)] の並び(最初の見出しより前は見出し行が空)。"""
+    sections: list[tuple[str, list[str]]] = [("", [])]
+    for line in text.splitlines():
+        if line.startswith("## ") or line.startswith("### "):
+            sections.append((line, []))
+        else:
+            sections[-1][1].append(line)
+    return [(head, "\n".join(body).strip("\n")) for head, body in sections]
+
+
+def brief_design(design: str, topic: str, budget: int = BRIEF_BUDGET) -> str:
+    """design.md を、議題に関係する節は本文まるごと、それ以外は見出しと「確定」の行だけにして渡す。
+    元の文をそのまま切り出すだけなので、要約で意味が変わることはない。"""
+    terms = topic_terms(topic)
+    sections = split_sections(design)
+
+    def score(head: str, body: str) -> int:
+        in_head = sum(3 for t in terms if t in head)
+        in_body = sum(1 for t in terms if t in body)
+        return in_head + (in_body if in_body >= 2 else 0)
+
+    always = ("## 1. コンセプト", "## 12. 未決事項")
+    # 「## 」の節と、その下の「### 」の節をひとまとまりとして扱う(親が当たれば子も、子が当たれば親の前置きも載せる)
+    parent: dict[int, int] = {}
+    current = 0
+    for i, (head, _) in enumerate(sections):
+        if head.startswith("## "):
+            current = i
+        elif head.startswith("### "):
+            parent[i] = current
+    ranked = sorted(((score(h, b), i) for i, (h, b) in enumerate(sections) if h and not h.startswith(always)), reverse=True)
+    full, used = set(), 0
+    for value, i in ranked:
+        if value < 3:
+            break
+        group = {i}
+        if i in parent:
+            group.add(parent[i])
+        else:
+            group.update(j for j, p in parent.items() if p == i)
+        group -= full
+        size = sum(len(sections[j][1]) for j in group)
+        if used + size > budget:
+            continue
+        full |= group
+        used += size
+    parts = ["> これは docs/design.md の抜粋です。議題に関係する節は本文まるごと、それ以外の節は見出しと `確定` の行だけを載せています。"
+             "載っていない節の中身を推測で語らないでください。"]
+    for i, (head, body) in enumerate(sections):
+        if not head:
+            parts.append(body)
+        elif i in full or head.startswith(always):
+            parts.append(f"{head}\n{body}")
+        else:
+            kept = [line for line in body.splitlines() if "`確定`" in line]
+            parts.append("\n".join([head + ("" if kept else "　(省略)")] + kept))
+    return "\n\n".join(p for p in parts if p.strip())
+
+
+def brief_decisions(decisions: str, topic: str) -> str:
+    """decisions.md を、各決定の見出しと「決定：」の行だけにする。議題に関係する決定は理由・却下した案まで残す。"""
+    terms = topic_terms(topic)
+    parts = []
+    for head, body in split_sections(decisions):
+        if not head.startswith("## 20"):   # 書き方の見本やはじめの説明は省く
+            continue
+        hits = sum(1 for t in terms if t in head or t in body)
+        if hits >= 2:
+            parts.append(f"{head}\n{body}")
+        else:
+            parts.append("\n".join([head] + [line for line in body.splitlines() if line.startswith("- 決定")]))
+    return "> これは docs/decisions.md の抜粋です(関係の薄い決定は「決定」の行だけ)。\n\n" + "\n\n".join(parts)
+
+
 def system_prompt(agents_md: str, name: str, others: list[str]) -> str:
     return f"""あなたは、ゲームの企画会議に参加している「{name}」です。ほかの参加者は {'、'.join(others)} です。
 次のリポジトリのルール(AGENTS.md)に必ず従ってください。
@@ -363,17 +455,22 @@ def run(env: dict, github: GitHub, models: Models, docs_root: Path = ROOT, log=p
     draft = issue or {"number": "新規", "title": f"[AI会議] {topic}", "body": issue_body(topic)}
     log(f"議題: {draft['title']}")
 
-    docs = f"## docs/design.md\n{design}\n\n## docs/decisions.md\n{decisions}"
+    topic_text = f"{draft['title']}\n{topic}\n{(issue or {}).get('body') or ''}"
+    docs = f"## docs/design.md(抜粋)\n{brief_design(design, topic_text)}\n\n## docs/decisions.md(抜粋)\n{brief_decisions(decisions, topic_text)}"
+    log(f"資料: {len(docs)} 文字(design.md {len(design)} 文字・decisions.md {len(decisions)} 文字から抜粋)")
     names = [n for n, _ in participants]
     skipped: list[str] = []
 
     def ask(name: str, model: str, comments: list[dict], instruction: str, role: str = "", effort: str | None = None) -> str | None:
         extra = {"effort": effort} if effort else {}
+        started = time.monotonic()
         try:
-            return models.chat(model, system_prompt(agents, name + role, [n for n in names if n != name]),
+            text = models.chat(model, system_prompt(agents, name + role, [n for n in names if n != name]),
                                f"{docs}\n\n{transcript(draft, comments)}\n\n---\n{instruction}", **extra)
+            log(f"{name}{role}: {time.monotonic() - started:.0f}秒")
+            return text
         except MeetingError as error:
-            log(f"{name} は応答できませんでした: {error}")
+            log(f"{name}{role} は応答できませんでした({time.monotonic() - started:.0f}秒): {error}")
             return None
 
     # 1周目は、まず全員の意見を集めてから投稿する
@@ -445,7 +542,7 @@ def main() -> int:
             interval = 15
         models = Router(env, parse_models(env.get("AI_MODELS", "")), interval=interval)
         models.check()
-        run(env, github, models)
+        run(env, github, models, log=lambda *a: print(*a, flush=True))   # 実行中もログに出るように
         return 0
     except MeetingError as error:
         print(f"::error::{error}")
