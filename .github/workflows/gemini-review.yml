@@ -68,6 +68,7 @@ jobs:
           EXT_SHA: 'dd1a10d2c9d07b2ebade866590fdfa59cd8f9d04'
 
       - name: 'Run Gemini pull request review'
+        id: 'gemini_review'
         uses: 'google-github-actions/run-gemini-cli@v0'
         env:
           GEMINI_CLI_TRUST_WORKSPACE: 'true'
@@ -122,3 +123,19 @@ jobs:
               "${{ runner.temp }}/code-review"
             ]
           prompt: '/pr-code-review'
+
+      # Geminiの返答とエラーをログにも出す（Artifactsが読めない環境でも原因を追えるように）
+      - name: 'Show Gemini output'
+        if: '${{ always() }}'
+        run: |-
+          echo '::: Gemini response :::'
+          printf '%s\n' "${GEMINI_RESPONSE}"
+          echo '::: Gemini errors :::'
+          printf '%s\n' "${GEMINI_ERRORS}" | tail -n 80
+          if [[ -f .gemini/telemetry.log ]]; then
+            echo '::: Tool calls :::'
+            grep -o '"function_name":"[^"]*"\|"success":[a-z]*\|"error":"[^"]\{0,300\}' .gemini/telemetry.log | head -n 100 || true
+          fi
+        env:
+          GEMINI_RESPONSE: '${{ steps.gemini_review.outputs.gemini_response }}'
+          GEMINI_ERRORS: '${{ steps.gemini_review.outputs.gemini_errors }}'
