@@ -217,6 +217,51 @@ class MeetingTests(unittest.TestCase):
         self.assertEqual(m.Models("https://x/v1", "k").headers, {"Authorization": "Bearer k"})
 
 
+class BriefTest(unittest.TestCase):
+    DOC = """# 企画
+## 1. コンセプト
+- タイル式　`確定`
+## 3. 合金
+- 配合は刻み式　`確定`
+- 品質は量で上がる　`案`
+### 炉
+- 炉にはティアがある　`案`
+## 5. 木
+- 交配なし　`確定`
+- 実在の種類で差をつける　`案`
+## 8. 世界・地形
+### バイオーム一覧
+- 砂漠や湿地など　`案`
+## 12. 未決事項
+- [ ] 武器種の数
+"""
+
+    def test_terms(self):
+        self.assertEqual(m.topic_terms("[AI会議] バイオーム仕様の整理（6軸）"), ["バイオーム", "6軸"])
+
+    def test_related_sections_are_full(self):
+        text = m.brief_design(self.DOC, "[AI会議] 合金の配合")
+        self.assertIn("品質は量で上がる", text)        # 当たった節は本文まるごと
+        self.assertIn("炉にはティアがある", text)       # 親が当たれば子の節も
+        self.assertIn("交配なし", text)                # 関係ない節も「確定」の行は残す
+        self.assertNotIn("実在の種類で差をつける", text)  # 関係ない節の「案」は省く
+        self.assertIn("武器種の数", text)              # 未決事項はいつも載せる
+
+    def test_child_pulls_parent(self):
+        text = m.brief_design(self.DOC, "バイオームの整理")
+        self.assertIn("## 8. 世界・地形", text)
+        self.assertIn("砂漠や湿地など", text)
+        self.assertIn("## 3. 合金　(省略)", text.replace("## 3. 合金\n- 配合は刻み式", "## 3. 合金　(省略)"))
+
+    def test_decisions(self):
+        dec = "# 決定ログ\n## YYYY-MM-DD タイトル\n- 決定：\n## 2026-11-18 配合は刻み式\n- 決定：刻む\n- 理由：合金の配合を絞る\n## 2026-11-18 木\n- 決定：交配なし\n- 理由：手間\n"
+        text = m.brief_decisions(dec, "合金の配合")
+        self.assertIn("合金の配合を絞る", text)
+        self.assertIn("交配なし", text)
+        self.assertNotIn("手間", text)
+        self.assertNotIn("YYYY", text)
+
+
 if __name__ == "__main__":
     unittest.main()
 
