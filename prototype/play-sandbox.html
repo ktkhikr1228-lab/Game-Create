@@ -809,8 +809,9 @@ function validate(w) {
 // 体の大きさの比較用。ブロックの大きさ(px)・当たり判定・ジャンプなどを、体ごとにまとめて切り替える
 // ジャンプは「登れる段差のブロック数」で決める（decisions 2026-11-21：2×3なら4ブロック）
 const BODIES = {
-  '23': {label: '2×3', T: 18, w: 1.7, h: 2.85, jump: 4.3, reach: 6, zoom: [30, 38], walk: 8.5},
-  '35': {label: '3×5', T: 12, w: 2.7, h: 4.85, jump: 6.3, reach: 9, zoom: [48, 60], walk: 13},
+  // grow：生成器は 1×2 の体を前提に作られているので、体が縦横に伸びた比率でワールドを引き伸ばす（とりあえずの調整）
+  '23': {label: '2×3', grow: [2, 1.5], T: 18, w: 1.7, h: 2.85, jump: 4.3, reach: 6, zoom: [30, 38], walk: 8.5},
+  '35': {label: '3×5', grow: [3, 2.5], T: 12, w: 2.7, h: 4.85, jump: 6.3, reach: 9, zoom: [48, 60], walk: 13},
 };
 let body = '23';   // URLの ?body=35 で 3×5 から始める（下で読む）
 let T = 18;                        // 1ブロックのpx（体で変わる）
@@ -871,7 +872,7 @@ const solidAt = (x, y) => isSolid[tileAt(x, y)] === 1;
 function newWorld(seed, size) {
   $('loading').hidden = false;
   setTimeout(() => {
-    world = generate(seed, size);
+    world = scaleWorld(generate(seed, size), ...BODIES[body].grow);
     blocks = world.blocks; W = world.W; H = world.H;
     const [sx, sy] = world.validation.spawn;
     player = {x: (sx + .5) * T, y: (sy + 1) * T, vx: 0, vy: 0, ground: false, hp: 100, face: 1, spawn: [sx, sy]};
@@ -883,6 +884,25 @@ function newWorld(seed, size) {
     $('loading').hidden = true;
     toast(`シード「${seed}」 ${W}×${H} ブロック`);
   }, 30);
+}
+
+// ワールドを横 fx 倍・縦 fy 倍に引き伸ばす（いちばん近いマスの値を使う）
+function scaleWorld(w, fx, fy) {
+  if (fx === 1 && fy === 1) return w;
+  const W0 = w.W, H0 = w.H, W1 = Math.round(W0 * fx), H1 = Math.round(H0 * fy);
+  const sx = new Int32Array(W1), sy = new Int32Array(H1);
+  for (let x = 0; x < W1; x++) sx[x] = Math.min(W0 - 1, Math.floor(x / fx));
+  for (let y = 0; y < H1; y++) sy[y] = Math.min(H0 - 1, Math.floor(y / fy));
+  const grid = (src, Type) => { const out = new Type(W1 * H1); for (let y = 0; y < H1; y++) { const r0 = sy[y] * W0, r1 = y * W1; for (let x = 0; x < W1; x++) out[r1 + x] = src[r0 + sx[x]]; } return out; };
+  const col = (src, Type, f = v => v) => { const out = new Type(W1); for (let x = 0; x < W1; x++) out[x] = f(src[sx[x]]); return out; };
+  const [spx, spy] = w.validation.spawn;
+  return {...w, W: W1, H: H1,
+    blocks: grid(w.blocks, w.blocks.constructor), layer: grid(w.layer, w.layer.constructor), stab: grid(w.stab, w.stab.constructor),
+    regionOf: col(w.regionOf, w.regionOf.constructor),
+    // 地表の行は、引き伸ばしたあとの「そのマスの一番上」にそろえる
+    surf: col(w.surf, w.surf.constructor, v => Math.ceil(v * fy)),
+    features: w.features.map(f => ({...f, x: Math.round(f.x * fx), y: Math.round(f.y * fy), r: f.r * Math.max(fx, fy)})),
+    validation: {...w.validation, spawn: [Math.floor((spx + .5) * fx), Math.floor((spy + 1) * fy) - 1]}};
 }
 
 /* ---------- 画面の大きさ ---------- */
@@ -1317,10 +1337,8 @@ for (const el of document.querySelectorAll('[data-dbg]')) el.addEventListener('c
 $('dbgBtn').addEventListener('click', () => toggleDebug());
 $('toTown').addEventListener('click', () => teleport(...player.spawn));
 function setBody(k) {
-  const tx = player.x / T, ty = player.y / T;
-  body = k; applyBody(); zoomBlocks = BODIES[body].zoom[coarse ? 0 : 1]; resize();
-  player.x = tx * T; player.y = ty * T; player.vx = player.vy = 0;
-  cam.x = player.x - viewW() / 2; cam.y = player.y - viewH() * .55;
+  body = k; applyBody(); zoomBlocks = BODIES[body].zoom[coarse ? 0 : 1];
+  newWorld(world.seed, $('size').value);   // 体に合わせて引き伸ばし直す
   for (const el of document.querySelectorAll('[data-body]')) el.classList.toggle('on', el.dataset.body === body);
   const u = new URL(location.href); u.searchParams.set('body', body); history.replaceState(null, '', u);
   toast(`体 ${BODIES[body].label}（1ブロック ${T}px）`);
