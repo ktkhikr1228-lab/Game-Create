@@ -40,12 +40,14 @@
     padding: 0 calc(env(safe-area-inset-right) + 14px) 0 calc(env(safe-area-inset-left) + 14px); pointer-events: none; }
   @media (pointer: coarse) { #controls { display: flex; } }
   body.touch #controls { display: flex; }
-  .cluster { display: flex; gap: 10px; align-items: flex-end; pointer-events: auto; }
+  .cluster { display: flex; gap: 6px; align-items: flex-end; pointer-events: auto; }
   .pad { width: 64px; height: 64px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); background: rgba(0,0,0,.35);
     font-size: 24px; display: grid; place-items: center; touch-action: none; }
-  .pad.small { width: 50px; height: 50px; font-size: 18px; }
+  .pad.small { width: 46px; height: 46px; font-size: 17px; }
+  @media (max-width: 420px) { .pad { width: 58px; height: 58px; } .pad.small { width: 42px; height: 42px; } #controls { padding-left: 8px; padding-right: 8px; } }
   .pad.down { background: rgba(255,255,255,.3); }
   #modeBtn.place { background: rgba(60,120,200,.6); }
+  #digBtn { font-size: 13px; }
   #upBtn { display: none; }
   body.fly #upBtn { display: grid; }
 
@@ -95,6 +97,7 @@
     <button class="pad" data-key="right">▶</button>
   </div>
   <div class="cluster">
+    <button class="pad small" id="digBtn" title="掘る範囲（Q）">1×1</button>
     <button class="pad small" id="modeBtn" title="掘る／置く（E）">⛏</button>
     <button class="pad small" id="upBtn" data-key="up">▲</button>
     <button class="pad" data-key="jump">⤒</button>
@@ -102,6 +105,15 @@
 </div>
 
 <div id="dbgPanel">
+  <h3>体の大きさ（比べる用）</h3>
+  <div class="grid">
+    <button data-body="23">2×3（18px）</button>
+    <button data-body="35">3×5（12px）</button>
+  </div>
+  <h3>掘る範囲</h3>
+  <div class="grid" style="grid-template-columns: repeat(4, 1fr)">
+    <button data-dig="1">1</button><button data-dig="2">2</button><button data-dig="3">3</button><button data-dig="4">4</button>
+  </div>
   <h3>動き・掘る</h3>
   <div class="grid">
     <button data-dbg="fly">飛ぶ</button>
@@ -142,6 +154,8 @@
       <li>ブロックを<b>長押し</b>で掘る。届くのは自分のまわり4〜5ブロック</li>
       <li>⛏ を押すと 🧱（置く）に切り替わる。置くブロックは上の持ち物から選ぶ</li>
       <li><b>PC</b>：A D / ← → で移動、W・Space でジャンプ、S で下、マウス長押しで掘る、右クリックで置く、E で切り替え、` でデバッグ</li>
+      <li>右下の「1×1」で、まとめて掘る範囲を 1×1〜4×4 に切り替え（PCは Q）</li>
+      <li>🐞 のパネルで、体の大きさを 2×3 と 3×5 で比べられる</li>
       <li>🐞 でデバッグ（飛ぶ・地図で移動・鉱石の透視など）。もう一度押すとパネルだけ隠れる</li>
     </ul>
     <button id="helpOk">はじめる</button>
@@ -792,10 +806,24 @@ function validate(w) {
 /* =====================================================================
    ここから下が「遊べる試作」の部分（上の生成コードは worldgen-sandbox.html と同じ）
    ===================================================================== */
-const T = 18;                       // 1ブロック = 18px（design.md の「掘る単位」）
-const PHYS = {gravity: 900, jump: 370, walk: 140, maxFall: 620, swim: 80, waterGravity: 260, waterFall: 90, climb: 110, fly: 420};
-const PLAYER = {w: 13, h: 30};      // 当たり判定（px）。幅は1ブロックより細く、高さは2ブロック弱
-const REACH = 4.5;                  // 掘る・置くが届く距離（ブロック）
+// 体の大きさの比較用。ブロックの大きさ(px)・当たり判定・ジャンプなどを、体ごとにまとめて切り替える
+// ジャンプは「登れる段差のブロック数」で決める（decisions 2026-11-21：2×3なら4ブロック）
+const BODIES = {
+  '23': {label: '2×3', T: 18, w: 1.7, h: 2.85, jump: 4.3, reach: 6, zoom: [30, 38], walk: 8.5},
+  '35': {label: '3×5', T: 12, w: 2.7, h: 4.85, jump: 6.3, reach: 9, zoom: [48, 60], walk: 13},
+};
+let body = '23';   // URLの ?body=35 で 3×5 から始める（下で読む）
+let T = 18;                        // 1ブロックのpx（体で変わる）
+let PHYS = {}, PLAYER = {w: 0, h: 0}, REACH = 6;
+let digSize = 1;   // まとめて掘る範囲（N×N）
+function applyBody() {
+  const b = BODIES[body];
+  T = b.T; REACH = b.reach;
+  PLAYER = {w: b.w * T, h: b.h * T};
+  const g = 50 * T;   // 重力（ブロック/秒²×T）
+  PHYS = {gravity: g, jump: Math.sqrt(2 * g * b.jump * T), walk: b.walk * T, maxFall: 34 * T, swim: 4.5 * T,
+          waterGravity: 14 * T, waterFall: 5 * T, climb: 6 * T, fly: 24 * T};
+}
 const $ = id => document.getElementById(id);
 const canvas = $('game'), ctx = canvas.getContext('2d');
 const params = new URLSearchParams(location.search);
@@ -865,7 +893,11 @@ function resize() {
   // 画面の短いほうに、だいたい zoomBlocks ブロック映るようにする
   scale = Math.min(innerWidth, innerHeight) / zoomBlocks / T * dpr;
 }
-let zoomBlocks = +(params.get('zoom') || 0) || (matchMedia('(pointer: coarse)').matches ? 20 : 26);
+const coarse = matchMedia('(pointer: coarse)').matches;
+if (BODIES[params.get('body')]) body = params.get('body');
+digSize = Math.max(1, Math.min(4, +(params.get('dig') || 1)));
+applyBody();
+let zoomBlocks = +(params.get('zoom') || 0) || BODIES[body].zoom[coarse ? 0 : 1];
 const viewW = () => canvas.width / scale, viewH = () => canvas.height / scale;
 
 /* ---------- 物理 ---------- */
@@ -972,20 +1004,36 @@ function useTool(dt) {
     pointer.fresh = false;
     return;
   }
+  // ねらったマスを中心に N×N をまとめて掘る（掘れないマスは飛ばす）
+  const area = digArea(tx, ty);
   const id = tileAt(tx, ty);
-  const need = mineTime(id);
-  if (!isFinite(need)) { if (pointer.fresh && id) toast(`${BLOCKS[id].name}は掘れない`); pointer.fresh = false; mining = null; return; }
+  const times = area.map(([x, y]) => mineTime(tileAt(x, y))).filter(isFinite);
+  if (!times.length) { if (pointer.fresh && id) toast(`${BLOCKS[id].name}は掘れない`); pointer.fresh = false; mining = null; return; }
+  // 時間は一番硬いマス＋まとめた数ぶん少し長く
+  const need = Math.max(...times) * (1 + .12 * (times.length - 1));
   pointer.fresh = false;
   if (!mining || mining.x !== tx || mining.y !== ty) mining = {x: tx, y: ty, t: 0, need};
   mining.t += dt;
   if (mining.t >= mining.need) {
-    setTile(tx, ty, B.AIR);
-    inv.set(id, (inv.get(id) || 0) + 1);
-    if (selected < 0) selected = id;
-    if (isOre[id] && inv.get(id) === 1) toast(`${BLOCKS[id].name}を見つけた！`);
+    for (const [x, y] of area) {
+      const a = tileAt(x, y);
+      if (!isFinite(mineTime(a))) continue;
+      setTile(x, y, B.AIR);
+      inv.set(a, (inv.get(a) || 0) + 1);
+      if (selected < 0) selected = a;
+      if (isOre[a] && inv.get(a) === 1) toast(`${BLOCKS[a].name}を見つけた！`);
+    }
     updateHotbar();
     mining = null;
   }
+}
+function digArea(tx, ty) {
+  const out = [], o = Math.floor((digSize - 1) / 2);
+  for (let dy = 0; dy < digSize; dy++) for (let dx = 0; dx < digSize; dx++) {
+    const x = tx - o + dx, y = ty - o + dy;
+    if (x >= 0 && y >= 0 && x < W && y < H) out.push([x, y]);
+  }
+  return out;
 }
 
 /* ---------- 持ち物（ホットバー） ---------- */
@@ -1079,10 +1127,10 @@ function render() {
   // 暗さ：地表から深いほど暗く、自分のまわりだけ明るい
   const p = player;
   const ptx = Math.floor(p.x / T), depth = Math.floor(p.y / T) - world.surf[Math.max(0, Math.min(W - 1, ptx))];
-  if (!dbg.light && depth > 4) {
-    const a = Math.min(.93, (depth - 4) / 30 + .45);
+  if (!dbg.light && depth > 10) {
+    const a = Math.min(.9, (depth - 10) / 40 + .35);
     const cx = (p.x - cam.x) * s, cy = (p.y - PLAYER.h / 2 - cam.y) * s;
-    const rg = ctx.createRadialGradient(cx, cy, T * s * 2.2, cx, cy, T * s * 8);
+    const rg = ctx.createRadialGradient(cx, cy, PLAYER.h * s * 1.4, cx, cy, PLAYER.h * s * 4.5);
     rg.addColorStop(0, 'rgba(0,0,0,0)'); rg.addColorStop(1, `rgba(0,0,0,${a})`);
     ctx.fillStyle = rg; ctx.fillRect(0, 0, cw, ch);
   }
@@ -1105,11 +1153,13 @@ function render() {
     const [tx, ty] = screenToTile(pointer.sx, pointer.sy);
     const ok = inReach(tx, ty);
     ctx.strokeStyle = ok ? (mode === 'place' ? '#8fd0ff' : '#fff') : 'rgba(255,90,90,.8)';
-    ctx.lineWidth = Math.max(1.5, s); ctx.strokeRect(toSx(tx) + 1, toSy(ty) + 1, sz - 3, sz - 3);
+    const o = mode === 'dig' ? Math.floor((digSize - 1) / 2) : 0, n = mode === 'dig' ? digSize : 1;
+    ctx.lineWidth = Math.max(1.5, s); ctx.strokeRect(toSx(tx - o) + 1, toSy(ty - o) + 1, toSx(tx - o + n) - toSx(tx - o) - 3, toSy(ty - o + n) - toSy(ty - o) - 3);
     if (mining && mining.need > 0) {
       ctx.fillStyle = 'rgba(0,0,0,.45)';
       const f = Math.min(1, mining.t / mining.need);
-      ctx.fillRect(toSx(mining.x), toSy(mining.y) + sz * (1 - f), sz, sz * f);
+      const o = Math.floor((digSize - 1) / 2), wpx = toSx(mining.x - o + digSize) - toSx(mining.x - o);
+      ctx.fillRect(toSx(mining.x - o), toSy(mining.y - o) + wpx * (1 - f), wpx, wpx * f);
     }
   }
 
@@ -1117,9 +1167,10 @@ function render() {
   const px = (p.x - PLAYER.w / 2 - cam.x) * s, py = (p.y - PLAYER.h - cam.y) * s;
   ctx.fillStyle = '#2f3a56'; ctx.fillRect(px, py + PLAYER.h * .35 * s, PLAYER.w * s, PLAYER.h * .65 * s);
   ctx.fillStyle = '#f0c8a0'; ctx.fillRect(px + PLAYER.w * .1 * s, py, PLAYER.w * .8 * s, PLAYER.h * .35 * s);
-  ctx.fillStyle = '#e0a020'; ctx.fillRect(px - 1 * s, py - 2 * s, (PLAYER.w + 2) * s, 4 * s);   // ヘルメット
-  ctx.fillStyle = '#fff6b0'; ctx.fillRect(px + (p.face > 0 ? PLAYER.w - 3 : 0) * s, py - 1 * s, 3 * s, 3 * s); // ランプ
-  ctx.fillStyle = '#111'; ctx.fillRect(px + (p.face > 0 ? PLAYER.w * .6 : PLAYER.w * .25) * s, py + PLAYER.h * .12 * s, 2 * s, 2 * s);
+  const u = PLAYER.h / 30;   // 絵の細かさの単位
+  ctx.fillStyle = '#e0a020'; ctx.fillRect(px - u * s, py - 2 * u * s, (PLAYER.w + 2 * u) * s, 4 * u * s);   // ヘルメット
+  ctx.fillStyle = '#fff6b0'; ctx.fillRect(px + (p.face > 0 ? PLAYER.w - 3 * u : 0) * s, py - u * s, 3 * u * s, 3 * u * s); // ランプ
+  ctx.fillStyle = '#111'; ctx.fillRect(px + (p.face > 0 ? PLAYER.w * .6 : PLAYER.w * .25) * s, py + PLAYER.h * .12 * s, 2 * u * s, 2 * u * s);
 
   if (dbg.map) drawMap();
 }
@@ -1218,7 +1269,7 @@ canvas.addEventListener('pointerdown', e => {
     const r = mapRect(), mx = (e.clientX * dpr - r.x) / r.k, my = (e.clientY * dpr - r.y) / r.k;
     if (mx >= 0 && my >= 0 && mx < W && my < H) {
       let ty = Math.floor(my); const tx = Math.floor(mx);
-      if (!dbg.fly) { while (ty > 2 && (solidAt(tx, ty) || solidAt(tx, ty - 1))) ty--; }
+      if (!dbg.fly) { while (ty > 6 && bodyHits((tx + .5) * T, (ty + 1) * T)) ty--; }
       teleport(tx, ty); setDbg('map', false); return;
     }
     setDbg('map', false); return;   // 地図の外をタップしたら閉じる
@@ -1265,6 +1316,23 @@ function setDbg(k, v) {
 for (const el of document.querySelectorAll('[data-dbg]')) el.addEventListener('click', () => setDbg(el.dataset.dbg, !dbg[el.dataset.dbg]));
 $('dbgBtn').addEventListener('click', () => toggleDebug());
 $('toTown').addEventListener('click', () => teleport(...player.spawn));
+function setBody(k) {
+  const tx = player.x / T, ty = player.y / T;
+  body = k; applyBody(); zoomBlocks = BODIES[body].zoom[coarse ? 0 : 1]; resize();
+  player.x = tx * T; player.y = ty * T; player.vx = player.vy = 0;
+  cam.x = player.x - viewW() / 2; cam.y = player.y - viewH() * .55;
+  for (const el of document.querySelectorAll('[data-body]')) el.classList.toggle('on', el.dataset.body === body);
+  const u = new URL(location.href); u.searchParams.set('body', body); history.replaceState(null, '', u);
+  toast(`体 ${BODIES[body].label}（1ブロック ${T}px）`);
+}
+function setDig(n) {
+  digSize = n; $('digBtn').textContent = `${n}×${n}`;
+  for (const el of document.querySelectorAll('[data-dig]')) el.classList.toggle('on', +el.dataset.dig === n);
+}
+for (const el of document.querySelectorAll('[data-body]')) el.addEventListener('click', () => setBody(el.dataset.body));
+for (const el of document.querySelectorAll('[data-dig]')) el.addEventListener('click', () => setDig(+el.dataset.dig));
+$('digBtn').addEventListener('click', () => setDig(digSize % 4 + 1));
+addEventListener('keydown', e => { if (e.code === 'KeyQ') setDig(digSize % 4 + 1); });
 $('zoomIn').addEventListener('click', () => { zoomBlocks = Math.max(6, zoomBlocks - 4); resize(); });
 $('zoomOut').addEventListener('click', () => { zoomBlocks = Math.min(160, zoomBlocks + 6); resize(); });
 $('regen').addEventListener('click', () => newWorld($('seed').value.trim() || 'komorebi', $('size').value));
@@ -1274,7 +1342,8 @@ $('giveOres').addEventListener('click', () => { for (const b of BLOCKS) if (b.ca
 addEventListener('resize', resize);
 document.addEventListener('gesturestart', e => e.preventDefault());   // iOS のピンチ拡大を止める
 if (params.get('debug') === '1') toggleDebug(true);
-setMode('dig');
+setMode('dig'); setDig(digSize);
+for (const el of document.querySelectorAll('[data-body]')) el.classList.toggle('on', el.dataset.body === body);
 newWorld(params.get('seed') || 'komorebi', SIZES[params.get('size')] ? params.get('size') : 'play');
 requestAnimationFrame(frame);
 
