@@ -1,0 +1,92 @@
+name: Gemini PR作成
+
+# Issueに「@gemini-cli /pr」とコメントすると、GeminiがそのIssueの依頼どおりにファイルを変更して、PRを作る。
+# - 呼べるのはリポジトリのオーナーだけ(公開repoなので、ほかの人がAPIのクレジットを使えないようにする)
+# - 「/pr」の後ろに書いた文は、追加の指示としてGeminiに渡す(例: @gemini-cli /pr 図鑑の文だけ直して)
+# - Geminiには道具を持たせない。tools/gemini_pr.py が「ファイルの新しい全文」を受け取って書き込み、
+#   このワークフローがコミット・push・PR作成をする。PRは自動ではマージしない(取り込むかはオーナーが決める)
+# - .github/ の中は変更できない(GITHUB_TOKEN にはワークフローを変更する権限がないため)
+# - 必要な Secret: GEMINI_API_KEY(gemini-review.yml と同じもの)
+# - 任意の Variable: GEMINI_MODEL(使うモデル。空なら gemini-4-argon。「@medium」などでエフォート指定可)
+# - 必要な設定: Settings → Actions → General → Workflow permissions の
+#   「Allow GitHub Actions to create and approve pull requests」をオンにする(オフだとPRを作れない)
+# - GITHUB_TOKEN で作ったPRでは、ほかのワークフローは自動では動かない。レビューは PR に「@gemini-cli /review」で頼む
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: gemini-pr-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  make-pr:
+    if: >-
+      !github.event.issue.pull_request &&
+      github.event.sender.type == 'User' &&
+      github.event.comment.author_association == 'OWNER' &&
+      startsWith(github.event.comment.body, '@gemini-cli /pr')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 受付コメント
+        # run の値に「: 」が入るとYAMLとして読めないので、ブロック(|)で書く
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body "Geminiが作業を始めました。進み具合: $RUN_URL"
+
+      - name: スクリプトのテスト
+        run: python -m unittest discover -s tools -p "test_*.py"
+
+      - name: Geminiに変更を作らせる
+        id: gemini
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          # コメント本文は環境変数で渡す(スクリプトに埋め込まない)
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        # 変更がなかったときは、スクリプトがIssueにその旨をコメントする
+        run: python tools/gemini_pr.py
+
+      - name: コミットしてPRを作る
+        if: steps.gemini.outputs.changed == 'true'
+        env:
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body "Geminiの変更が今のファイルと同じだったので、PRは作りませんでした。"
+            exit 0
+          fi
+          BRANCH="gemini/issue-${ISSUE_NUMBER}-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add -A
+          git commit -F "$RUNNER_TEMP/gemini_pr/commit_msg.txt"
+          git push origin "$BRANCH"
+          PR_URL=$(gh pr create --repo "$REPO" --base "$BASE" --head "$BRANCH" \
+            --title "$(head -n 1 "$RUNNER_TEMP/gemini_pr/commit_msg.txt")" \
+            --body-file "$RUNNER_TEMP/gemini_pr/pr_body.md")
+          gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body "PRを作りました: $PR_URL"
+
+      - name: 失敗したとき
+        if: failure()
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body "Geminiの作業が失敗しました。ログ: $RUN_URL"

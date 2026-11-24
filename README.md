@@ -85,5 +85,17 @@ PRに `@gemini-cli /review` とコメントすると、GeminiがそのPRをレ�
 - 費用：APIの従量課金。AI Studio で前払い（最低 $5）が必要で、Google Cloud のクレジットはそのあとに使える
 - 仕組み：`.github/workflows/gemini-review.yml` と `tools/pr_review.py`
 
+### Gemini PR作成（GitHub Actions）
+Issueに `@gemini-cli /pr` とコメントすると、GeminiがそのIssueの依頼どおりにファイルを変更して、PRを作る。
+
+- 呼べるのはオーナーだけ。PRは自動ではマージしない（取り込むかはオーナーが決める）
+- Geminiには道具を持たせない。Issueのやり取りと企画の資料・関係するファイルを渡し、返ってきた「ファイルの新しい全文」をスクリプトが書き込む。コミット・push・PR作成はワークフローが行う
+- `/pr` の後ろに、追加の指示を書ける。例：`@gemini-cli /pr 図鑑の文だけ直して`
+- 変更できないもの：`.github/` の中（GITHUB_TOKEN にワークフローを変える権限がないため）。1回に変更できるのは30ファイルまで
+- Geminiが変更を作らなかったとき（依頼があいまい・決定と矛盾するなど）は、理由や質問をIssueにコメントする
+- 準備：PRレビューと同じ `GEMINI_API_KEY` に加えて、Settings → Actions → General → Workflow permissions の「Allow GitHub Actions to create and approve pull requests」をオンにする
+- 注意：このワークフローが作ったPRでは、ほかのワークフローは自動で動かない。レビューはPRに `@gemini-cli /review` とコメントして頼む
+- 仕組み：`.github/workflows/gemini-pr.yml` と `tools/gemini_pr.py`
+
 ### ChatGPT（チャットで読むだけ）
 - ChatGPT の設定でGitHubを接続し、このrepoへのアクセスを許可
