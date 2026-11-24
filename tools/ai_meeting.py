@@ -16,11 +16,14 @@
                                                 ゲートウェイを通さず、その会社の公式APIを直接使う(例: Gemini=gemini:gemini-4-neon)
                                                 モデルIDの後ろに「@low」「@medium」「@high」などを付けると、考える量(エフォート)を指定する
                                                 (例: Gemini=gemini:gemini-4-argon@medium)。付けなければモデルの既定のまま
+                                                「|」で区切って予備のモデルを書くと、前のモデルが答えられないときに順に使う
+                                                (例: Claude=claude-opus-5.5|anthropic:claude-opus-5-5)
   AI_SUMMARY_EFFORT                           … まとめ役のときだけ使うエフォート(任意。例: high)
   GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / MISTRAL_API_KEY
                                               … 公式APIを直接使うときのキー。使う会社のぶんだけ Secrets に登録
                                                 (ゲートウェイを使うモデルがなければ、AI_API_BASE / AI_API_KEY は不要)
   AI_CALL_INTERVAL                            … 呼び出しの間に空ける秒数(既定15。混雑しやすいゲートウェイ向け)
+  AI_STREAM                                   … 0 にすると、返答を少しずつ受け取る方式(ストリーミング)を使わない(既定は使う)
   MEETING_TOPIC / MEETING_ISSUE / MEETING_ROUNDS … 手動実行のときの入力
 Python標準ライブラリだけで動く。
 """
@@ -68,7 +71,8 @@ def parse_models(text: str) -> list[tuple[str, str]]:
         name, _, model = part.partition("=")
         if not name.strip() or not model.strip():
             raise MeetingError(f"AI_MODELS の書き方が違います: {part!r}(「表示名=モデルID」をカンマ区切りで)")
-        split_effort(model)   # エフォートの書き方を、会議を始める前に確かめる
+        for alt in alternatives(model):   # エフォートの書き方を、会議を始める前に確かめる
+            split_effort(alt)
         models.append((name.strip(), model.strip()))
     if not 2 <= len(models) <= 5:
         raise MeetingError("参加モデルは2〜5個にしてください")
@@ -76,6 +80,14 @@ def parse_models(text: str) -> list[tuple[str, str]]:
 
 
 EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
+
+
+def alternatives(spec: str) -> list[str]:
+    """「claude-opus-5.5|anthropic:claude-opus-5-5」→ 先に試す順のモデルの並び。"""
+    alts = [a.strip() for a in spec.split("|") if a.strip()]
+    if not alts:
+        raise MeetingError(f"モデルIDが空です: {spec!r}")
+    return alts
 
 
 def split_effort(spec: str) -> tuple[str, str | None]:
@@ -203,12 +215,12 @@ class GitHub:
 
 class Models:
     def __init__(self, base: str, key: str, header: str = "Authorization", opener=urllib.request.urlopen, sleep=time.sleep,
-                 interval: float = 15, clock=time.monotonic, key_name: str = "AI_API_KEY"):
+                 interval: float = 15, clock=time.monotonic, key_name: str = "AI_API_KEY", stream: bool = True, log=print):
         if not base or not key:
             raise MeetingError("AI_API_BASE と AI_API_KEY を、リポジトリの Secrets に登録してください")
         if any(c.isspace() or ord(c) < 32 for c in key):
             raise MeetingError(f"{key_name} に改行や空白が混ざっています(キー1行だけにしてください)")
-        self.key_name = key_name
+        self.key_name, self.key, self.stream, self.log = key_name, key, stream, log
         self.base, self.opener, self.sleep, self.clock = base.rstrip("/"), opener, sleep, clock
         self.interval = max(0.0, interval)
         self._last_call: float | None = None
@@ -234,32 +246,41 @@ class Models:
                                                    {"role": "user", "content": user}]}
         if effort:   # 指定したときだけ送る(対応していない入口もあるため)
             payload_in["reasoning_effort"] = effort
-        body = json.dumps(payload_in).encode("utf-8")
         last = "不明なエラー"
-        for attempt in range(len(RETRY_WAITS) + 1):
+        attempt = 0
+        while attempt <= len(RETRY_WAITS):
             if self._last_call is not None:   # 短い間隔で続けて送ると、回数・量の制限に当たりやすい
                 wait = self.interval - (self.clock() - self._last_call)
                 if wait > 0:
                     self.sleep(wait)
             self._last_call = self.clock()
+            # 少しずつ受け取る(ストリーミング)。返答が全部できるまで黙っていると、ゲートウェイが待ちきれずに 504 を返すため
+            body = json.dumps({**payload_in, "stream": True} if self.stream else payload_in).encode("utf-8")
             request = urllib.request.Request(f"{self.base}/chat/completions", data=body, method="POST",
                                              headers={**self.headers, "Content-Type": "application/json",
+                                                      "Accept": "text/event-stream, application/json",
                                                       "User-Agent": "ai-meeting"})
-            retry_after = None
+            retry_after, hint = None, ""
             try:
                 with self.opener(request, timeout=180) as response:
-                    payload = json.loads(response.read().decode("utf-8"))
-                content = payload["choices"][0]["message"]["content"]
-                if isinstance(content, list):
-                    content = "".join(p.get("text", "") for p in content if isinstance(p, dict))
-                if str(content).strip():
-                    return str(content).strip()
+                    content = read_reply(response.read().decode("utf-8"))
+                if content.strip():
+                    return content.strip()
                 last = "空の返答"
-            except urllib.error.HTTPError as error:   # 本文にはキーの一部が入ることがあるので、番号だけ残す
+            except urllib.error.HTTPError as error:   # 本文にはキーの一部が入ることがあるので、伏せ字にしてログにだけ出す
                 last = f"HTTP {error.code}"
+                if self.stream and error.code in (400, 415, 422):   # ストリーミングを受け付けない入口なら、使わずにすぐ送り直す
+                    self.stream = False
+                    self.log(f"  {model}: {last}、ストリーミングを使わずに送り直します", flush=True)
+                    continue
+                hint = "" if error.code in (401, 403) else self.describe(error)
                 if error.code not in RETRYABLE:
+                    if hint:
+                        self.log(f"  {model}: {last}({hint})", flush=True)
                     break
                 retry_after = (error.headers or {}).get("Retry-After") if hasattr(error, "headers") else None
+            except StreamError as error:
+                last = f"返答の途中でエラー({error})"
             except (urllib.error.URLError, TimeoutError, OSError) as error:
                 last = f"接続できません({type(error).__name__})"
             except (KeyError, IndexError, TypeError, ValueError):
@@ -269,9 +290,57 @@ class Models:
                 wait = RETRY_WAITS[attempt]
                 if retry_after and str(retry_after).isdigit():   # 「何秒後に」と言われたらそれに従う(最大2分)
                     wait = max(wait, min(int(retry_after), 120))
-                print(f"  {model}: {last}、{wait}秒後にやり直し", flush=True)
+                self.log(f"  {model}: {last}{f'({hint})' if hint else ''}、{wait}秒後にやり直し", flush=True)
                 self.sleep(wait)
+            elif hint:
+                self.log(f"  {model}: {last}({hint})", flush=True)
+            attempt += 1
         raise MeetingError(last)
+
+    def describe(self, error: urllib.error.HTTPError) -> str:
+        """失敗の理由を探す手がかり(制限の種類・残り回数・本文の頭)。キーやキーらしい長い文字列は伏せる。"""
+        headers = getattr(error, "headers", None) or {}
+        hints = [f"{k}={v}" for k, v in headers.items()
+                 if re.match(r"(retry-after|x-ratelimit|x-rate-limit|ratelimit|x-quota|x-request-id)", k.lower())]
+        try:
+            text = error.read().decode("utf-8", "replace")
+        except Exception:   # 本文が読めなくても会議は続ける
+            text = ""
+        text = text.replace(self.key, "***") if self.key else text
+        text = re.sub(r"[A-Za-z0-9_\-]{24,}", "***", " ".join(text.split()))[:300]
+        return " ".join(hints + ([f"本文: {text}"] if text else []))
+
+
+class StreamError(RuntimeError):
+    """ストリーミングの途中で届いたエラー(混雑など。やり直す)。"""
+
+
+def read_reply(text: str) -> str:
+    """返答の本文を取り出す。ストリーミング(「data: 」の行の並び)と、まとめて返る形の両方に対応する。"""
+    def join(content) -> str:
+        if isinstance(content, list):
+            return "".join(p.get("text", "") for p in content if isinstance(p, dict))
+        return str(content or "")
+
+    if not re.match(r"\s*(data|event|:)", text):   # まとめて返る形(ストリーミングを無視する入口もある)
+        return join(json.loads(text)["choices"][0]["message"]["content"])
+    parts = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if not data or data == "[DONE]":
+            continue
+        chunk = json.loads(data)
+        if chunk.get("error"):
+            error = chunk["error"]
+            raise StreamError(str(error.get("code") or error.get("type") or "error") if isinstance(error, dict) else "error")
+        for choice in chunk.get("choices") or []:
+            parts.append(join((choice.get("delta") or {}).get("content")))
+    if not parts and '"choices"' not in text:
+        raise ValueError("no choices")
+    return "".join(parts)
 
 
 class Router:
@@ -279,8 +348,10 @@ class Router:
 
     def __init__(self, env: dict, participants: list[tuple[str, str]], interval: float = 15, make=Models):
         self.routes: dict[str, Models] = {}
+        self.last_used = ""
         missing = []
-        for _, spec in participants:
+        extra = {} if make is not Models else {"stream": (env.get("AI_STREAM") or "1").strip() not in ("0", "false", "no")}
+        for spec in [alt for _, seat in participants for alt in alternatives(seat)]:
             provider, _ = split_model(spec)
             if provider in self.routes:
                 continue
@@ -290,10 +361,10 @@ class Router:
                 if not key:
                     missing.append(info["key"])
                     continue
-                self.routes[provider] = make(info["base"], key, "Authorization", interval=interval, key_name=info["key"])
+                self.routes[provider] = make(info["base"], key, "Authorization", interval=interval, key_name=info["key"], **extra)
             else:
                 self.routes[""] = make(env.get("AI_API_BASE", ""), env.get("AI_API_KEY", ""), env.get("AI_KEY_HEADER", ""),
-                                       interval=interval)
+                                       interval=interval, **extra)
         if missing:
             raise MeetingError(f"公式APIのキーが Secrets にありません: {'、'.join(sorted(set(missing)))}")
 
@@ -302,12 +373,23 @@ class Router:
             if not provider or PROVIDERS[provider]["check"]:
                 route.check()
 
-    def chat(self, spec: str, system: str, user: str, effort: str | None = None) -> str:
-        provider, model = split_model(spec)
-        effort = effort or split_effort(spec)[1]
-        if effort:
-            return self.routes[provider].chat(model, system, user, effort=effort)
-        return self.routes[provider].chat(model, system, user)
+    def chat(self, seat: str, system: str, user: str, effort: str | None = None) -> str:
+        """席のモデルに頼む。「|」で予備のモデルが書いてあれば、答えられなかったときに順に頼む。"""
+        error: MeetingError | None = None
+        for spec in alternatives(seat):
+            provider, model = split_model(spec)
+            this_effort = effort or split_effort(spec)[1]
+            try:
+                if this_effort:
+                    text = self.routes[provider].chat(model, system, user, effort=this_effort)
+                else:
+                    text = self.routes[provider].chat(model, system, user)
+            except MeetingError as failed:
+                error = failed
+                continue
+            self.last_used = spec
+            return text
+        raise error or MeetingError("モデルがありません")
 
 
 # ---------- 会議 ----------
@@ -460,30 +542,59 @@ def run(env: dict, github: GitHub, models: Models, docs_root: Path = ROOT, log=p
     log(f"資料: {len(docs)} 文字(design.md {len(design)} 文字・decisions.md {len(decisions)} 文字から抜粋)")
     names = [n for n, _ in participants]
     skipped: list[str] = []
+    down: set[str] = set()   # 後回しにしても答えられなかった席。この会議ではもう呼ばない(待ち時間を無駄にしない)
 
-    def ask(name: str, model: str, comments: list[dict], instruction: str, role: str = "", effort: str | None = None) -> str | None:
+    def ask(name: str, model: str, comments: list[dict], instruction: str, role: str = "", effort: str | None = None):
+        """答えられれば (本文, 実際に答えたモデル)。だめなら None。"""
         extra = {"effort": effort} if effort else {}
         started = time.monotonic()
         try:
             text = models.chat(model, system_prompt(agents, name + role, [n for n in names if n != name]),
                                f"{docs}\n\n{transcript(draft, comments)}\n\n---\n{instruction}", **extra)
             log(f"{name}{role}: {time.monotonic() - started:.0f}秒")
-            return text
+            used = getattr(models, "last_used", "") or model
+            if used != model:
+                log(f"{name}{role}: 予備の {used} が答えました")
+            return text, used
         except MeetingError as error:
             log(f"{name}{role} は応答できませんでした({time.monotonic() - started:.0f}秒): {error}")
             return None
 
+    def go_round(round_no: int, comments_for, deliver) -> None:
+        """1周ぶん順に頼む。答えられなかった席は、ほかの席のあとに1回だけ頼み直す(制限が戻る時間をかせぐ)。"""
+        later = []
+        for name, model in participants:
+            if name in down:
+                skipped.append(f"{name}({round_no}周目)")
+                continue
+            reply = ask(name, model, comments_for(), instruction_for(round_no))
+            if reply is None:
+                later.append((name, model))
+                continue
+            deliver(name, reply)
+        for name, model in later:
+            log(f"{round_no}周目: {name} にもう一度頼みます(後回し)")
+            reply = ask(name, model, comments_for(), instruction_for(round_no))
+            if reply is None:
+                down.add(name)
+                skipped.append(f"{name}({round_no}周目)")
+                continue
+            deliver(name, reply)
+
+    def instruction_for(round_no: int) -> str:
+        if round_no == 1:
+            return "この議題について、最初の意見を述べてください。"
+        return (f"{round_no}周目です。ほかの参加者の意見を読み、同意・反論・補足を明示してください。"
+                "すでに出た内容の繰り返しは避け、論点を深めてください。")
+
     # 1周目は、まず全員の意見を集めてから投稿する
     earlier = github.comments(issue["number"]) if issue else []
     first: list[str] = []
-    for name, model in participants:
-        so_far = earlier + [{"body": b, "user": {"type": "Bot"}} for b in first]
-        text = ask(name, model, so_far, "この議題について、最初の意見を述べてください。")
-        if text is None:
-            skipped.append(f"{name}(1周目)")
-            continue
-        first.append(f"### 🤖 {name}(`{model}`)・1周目\n\n{text}")
+
+    def collect(name: str, reply) -> None:
+        first.append(f"### 🤖 {name}(`{reply[1]}`)・1周目\n\n{reply[0]}")
         log(f"1周目: {name} が答えました")
+    go_round(1, lambda: earlier + [{"body": b, "user": {"type": "Bot"}} for b in first], collect)
     # 1人でも答えられれば会議を開く(答えを捨てない)。誰も答えられなければIssueを作らずに止める
     if not first:
         raise MeetingError("1周目に誰も答えられなかったため、会議を開きませんでした。"
@@ -500,16 +611,12 @@ def run(env: dict, github: GitHub, models: Models, docs_root: Path = ROOT, log=p
     log(f"議題: #{issue['number']} に1周目を投稿しました")
 
     for round_no in range(2, rounds + 1):
-        for name, model in participants:
-            text = ask(name, model, github.comments(issue["number"]),
-                       f"{round_no}周目です。ほかの参加者の意見を読み、同意・反論・補足を明示してください。"
-                       "すでに出た内容の繰り返しは避け、論点を深めてください。")
-            if text is None:
-                skipped.append(f"{name}({round_no}周目)")
-                continue
-            github.comment(issue["number"], f"### 🤖 {name}(`{model}`)・{round_no}周目\n\n{text}"[:COMMENT_LIMIT] + FOOTER)
+        def post(name: str, reply, round_no=round_no) -> None:
+            nonlocal posted
+            github.comment(issue["number"], f"### 🤖 {name}(`{reply[1]}`)・{round_no}周目\n\n{reply[0]}"[:COMMENT_LIMIT] + FOOTER)
             posted += 1
             log(f"{round_no}周目: {name} が投稿しました")
+        go_round(round_no, lambda: github.comments(issue["number"]), post)
 
     # まとめ(まとめ役が答えられなければ、次のモデルに頼む)
     instruction = ("ここまでの議論を、オーナーが判断しやすいように整理してください。次の見出しで書きます。\n"
@@ -518,10 +625,11 @@ def run(env: dict, github: GitHub, models: Models, docs_root: Path = ROOT, log=p
     note = f"\n\n<sub>混雑などで参加できなかった回: {'、'.join(skipped)}</sub>" if skipped else ""
     summary_effort = split_effort("x@" + env["AI_SUMMARY_EFFORT"].strip())[1] if (env.get("AI_SUMMARY_EFFORT") or "").strip() else None
     comments = github.comments(issue["number"])
-    for name, model in participants:
-        text = ask(name, model, comments, instruction, role="(まとめ役)", effort=summary_effort)
-        if text is not None:
-            github.comment(issue["number"], (f"## 📝 まとめ({name})\n\n{text}")[:COMMENT_LIMIT] + note + FOOTER)
+    # 答えられている席から先にまとめ役を頼む(答えられなかった席は最後に回す)
+    for name, model in sorted(participants, key=lambda p: p[0] in down):
+        reply = ask(name, model, comments, instruction, role="(まとめ役)", effort=summary_effort)
+        if reply is not None:
+            github.comment(issue["number"], (f"## 📝 まとめ({name})\n\n{reply[0]}")[:COMMENT_LIMIT] + note + FOOTER)
             posted += 1
             break
     else:

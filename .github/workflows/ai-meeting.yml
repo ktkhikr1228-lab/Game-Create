@@ -11,6 +11,8 @@ name: AI会議
 #               AI_MODELS(任意。「表示名=モデルID」をカンマ区切り。省略時は Claude / GPT / Gemini の3つ)
 #               AI_CALL_INTERVAL(任意。呼び出しの間に空ける秒数。既定15。混雑で失敗が多いときに増やす)
 #               AI_SUMMARY_EFFORT(任意。まとめ役のときだけ使うエフォート。例: high)
+#               AI_STREAM(任意。0 にするとストリーミングを使わない。既定は使う。504が減らない入口で試す)
+#               AI_MODELS では「|」で予備のモデルを書ける(例: Claude=claude-opus-5.5|anthropic:claude-opus-5-5)
 #
 # AIはIssueにコメントするだけで、ファイルは変更しない(permissions も contents: read)。
 
@@ -65,6 +67,7 @@ jobs:
           AI_MODELS: ${{ vars.AI_MODELS }}
           AI_CALL_INTERVAL: ${{ vars.AI_CALL_INTERVAL }}
           AI_SUMMARY_EFFORT: ${{ vars.AI_SUMMARY_EFFORT }}
+          AI_STREAM: ${{ vars.AI_STREAM }}
           # 入力は環境変数で渡す(スクリプトに直接埋め込まない)
           MEETING_TOPIC: ${{ inputs.topic }}
           MEETING_ISSUE: ${{ inputs.issue }}
