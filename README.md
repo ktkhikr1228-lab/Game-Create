@@ -41,6 +41,7 @@ Settings → Secrets and variables → Actions で登録する。
 | Variable | `AI_SUMMARY_EFFORT` | 任意。まとめ役のときだけ使うエフォート(例：`high`) |
 | Secret | `GEMINI_API_KEY` など | 任意。ゲートウェイを通さず公式APIを使うときの、その会社のキー(`GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `MISTRAL_API_KEY`) |
 | Variable | `AI_CALL_INTERVAL` | 任意。呼び出しの間に空ける秒数(既定15)。混雑で参加できないモデルが多いときに増やす |
+| Variable | `AI_STREAM` | 任意。`0` にすると、返答を少しずつ受け取る方式(ストリーミング)を使わない。既定は使う |
 
 - 公式APIを直接使う：`AI_MODELS` のモデルIDの前に会社名を付ける。例：`Claude=claude-opus-5.5,GPT=gpt-6.1-sol,Gemini=gemini:gemini-4-neon`(GeminiだけGoogleの公式API、ほかはゲートウェイ)。付けられるのは `gemini:` `openai:` `anthropic:` `mistral:`。全員を公式APIにすれば、`AI_API_BASE` / `AI_API_KEY` は要らない
 - Geminiの公式APIのキーは Google AI Studio で発行する(AI Pro のログインは使わない)
@@ -48,9 +49,12 @@ Settings → Secrets and variables → Actions で登録する。
 - 仕組み：`.github/workflows/ai-meeting.yml` と `tools/ai_meeting.py`(Python標準ライブラリだけ)
 - AIはIssueにコメントするだけで、ファイルは変更しない(ワークフローの権限も読み取りのみ)
 - キーが受け付けられないときは、Issueを作らずに止まる
-- 混雑(429)や時間切れ(504など)のときは、20〜120秒あけて最大4回までやり直す
-- それでも答えられなかったモデルは飛ばし、まとめに「参加できなかった回」として1行だけ残す(失敗のコメントは書かない)
-- 1周目に答えられたモデルが2つ未満なら、Issueを作らずに止まる。少し時間をおいて開き直す
+- 予備のモデル：`AI_MODELS` で `|` の後ろに書くと、前のモデルが答えられないときに使う。例：`Claude=claude-opus-5.5|anthropic:claude-opus-5-5`(ゲートウェイがだめなら公式API。予備の会社のキーも Secrets に要る)
+- 返答はストリーミングで受け取る(返答が全部できるまで黙って待つと、ゲートウェイが待ちきれずに504を返すため)。ストリーミングを受け付けない入口なら、自動で使わない方式に切り替える
+- 混雑(429)や時間切れ(504など)のときは、15秒・45秒あけて最大2回までやり直す。失敗の理由(制限の種類・残り回数・エラー本文の頭。キーは伏せ字)をログに出す
+- それでも答えられなかった席は、その周のほかの席のあとに1回だけ頼み直す。それでもだめなら、その会議ではもう呼ばない(待ち時間を無駄にしない)
+- 参加できなかった回は、まとめに1行だけ残す(失敗のコメントは書かない)
+- 1周目に誰も答えられなければ、Issueを作らずに止まる。少し時間をおいて開き直す
 
 ## セットアップ
 ### Claude（@claude）

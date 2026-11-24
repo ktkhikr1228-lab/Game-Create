@@ -268,8 +268,6 @@ class BriefTest(unittest.TestCase):
         self.assertNotIn("YYYY", text)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class FakeRoute:
@@ -377,3 +375,136 @@ class EffortTest(unittest.TestCase):
                   FakeGitHub(), Recorder(), docs_root=root, log=lambda *a: None)
         self.assertIn(("a", True, "high"), seen)
         self.assertTrue(all(effort is None for _, summary, effort in seen if not summary))
+
+
+class Reply:
+    def __init__(self, text): self.text = text
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def read(self): return self.text.encode()
+
+
+def sse(*pieces, error=None):
+    import json as _json
+    lines = [": keep-alive"]
+    for p in pieces:
+        lines.append("data: " + _json.dumps({"choices": [{"delta": {"content": p}}]}, ensure_ascii=False))
+    if error:
+        lines.append("data: " + _json.dumps({"error": {"code": error}}))
+    lines.append("data: [DONE]")
+    return "\n\n".join(lines) + "\n\n"
+
+
+class StreamTest(unittest.TestCase):
+    def test_streaming_is_requested_and_read(self):
+        import json as _json
+        bodies = []
+
+        def opener(request, timeout):
+            bodies.append(_json.loads(request.data.decode()))
+            return Reply(sse("合金", "の", "意見"))
+        models = m.Models("https://x/v1", "k", opener=opener, sleep=lambda s: None, interval=0, log=lambda *a, **k: None)
+        self.assertEqual(models.chat("m", "s", "u"), "合金の意見")
+        self.assertTrue(bodies[0]["stream"])
+
+    def test_plain_json_reply_still_works_when_streaming_is_ignored(self):
+        self.assertEqual(m.read_reply('{"choices": [{"message": {"content": "ok"}}]}'), "ok")
+        self.assertEqual(m.read_reply('{"choices": [{"message": {"content": [{"text": "a"}, {"text": "b"}]}}]}'), "ab")
+
+    def test_gateway_without_streaming_gets_a_plain_request(self):
+        import io
+        import json as _json
+        import urllib.error
+        bodies = []
+
+        def opener(request, timeout):
+            body = _json.loads(request.data.decode())
+            bodies.append(body)
+            if body.get("stream"):
+                raise urllib.error.HTTPError(request.full_url, 400, "no", {}, io.BytesIO(b"stream not supported"))
+            return Reply('{"choices": [{"message": {"content": "ok"}}]}')
+        waits = []
+        models = m.Models("https://x/v1", "k", opener=opener, sleep=waits.append, interval=0, log=lambda *a, **k: None)
+        self.assertEqual(models.chat("m", "s", "u"), "ok")
+        self.assertEqual(models.chat("m", "s", "u"), "ok")
+        self.assertEqual([b.get("stream", False) for b in bodies], [True, False, False])   # 2回目からは最初から使わない
+        self.assertEqual(waits, [])
+
+    def test_error_in_the_middle_of_a_stream_is_retried(self):
+        replies = [sse("途中", error="overloaded"), sse("ok")]
+        waits = []
+        models = m.Models("https://x/v1", "k", opener=lambda r, timeout: Reply(replies.pop(0)), sleep=waits.append,
+                          interval=0, log=lambda *a, **k: None)
+        self.assertEqual(models.chat("m", "s", "u"), "ok")
+        self.assertEqual(waits, [m.RETRY_WAITS[0]])
+
+    def test_stream_can_be_turned_off(self):
+        router = m.Router({"AI_API_BASE": "https://gw/v1", "AI_API_KEY": "k", "AI_STREAM": "0"}, m.parse_models("A=a,B=b"))
+        self.assertFalse(router.routes[""].stream)
+
+    def test_failure_details_are_logged_without_the_key(self):
+        import io
+        import urllib.error
+        logs = []
+        body = b'{"message": "Quota exceeded for key secret-key-123 token abcdefghijklmnopqrstuvwxyz0123"}'
+
+        def opener(request, timeout):
+            raise urllib.error.HTTPError(request.full_url, 429, "busy", {"X-Quota-Remaining": "0", "Set-Cookie": "c"},
+                                         io.BytesIO(body))
+        models = m.Models("https://x/v1", "secret-key-123", opener=opener, sleep=lambda s: None, interval=0,
+                          log=lambda *a, **k: logs.append(" ".join(map(str, a))))
+        with self.assertRaises(m.MeetingError):
+            models.chat("m", "s", "u")
+        text = "\n".join(logs)
+        self.assertIn("X-Quota-Remaining=0", text)
+        self.assertIn("Quota exceeded", text)
+        self.assertNotIn("secret-key-123", text)
+        self.assertNotIn("abcdefghijklmnopqrstuvwxyz0123", text)
+        self.assertNotIn("Set-Cookie", text)
+
+
+class FallbackTest(unittest.TestCase):
+    def test_backup_model_answers_when_the_first_fails(self):
+        class Route:
+            def __init__(self, base, *a, **k): self.base = base
+            def check(self): pass
+            def chat(self, model, system, user):
+                if model == "claude-opus-5.5":
+                    raise m.MeetingError("HTTP 429")
+                return f"{model} ok"
+        parts = m.parse_models("Claude=claude-opus-5.5|gemini:gemini-4-neon,GPT=gpt")
+        router = m.Router({"AI_API_BASE": "b", "AI_API_KEY": "k", "GEMINI_API_KEY": "g"}, parts, make=Route)
+        self.assertEqual(router.chat(parts[0][1], "s", "u"), "gemini-4-neon ok")
+        self.assertEqual(router.last_used, "gemini:gemini-4-neon")
+
+    def test_backup_needs_its_key_up_front(self):
+        with self.assertRaises(m.MeetingError):
+            m.Router({"AI_API_BASE": "b", "AI_API_KEY": "k"}, m.parse_models("Claude=c|anthropic:x,GPT=g"), make=FakeRoute)
+
+
+class DeferTest(unittest.TestCase):
+    setUp, tearDown, run_meeting = MeetingTests.setUp, MeetingTests.tearDown, MeetingTests.run_meeting
+
+    def test_failed_seat_is_asked_again_after_the_others(self):
+        class Flaky(FakeModels):
+            def chat(self, model, system, user):
+                self.calls.append((model, system, user))
+                if model == "c" and sum(1 for c in self.calls if c[0] == "c") == 1:
+                    raise m.MeetingError("HTTP 429")
+                return f"{model} の意見"
+        gh, models = FakeGitHub(), Flaky()
+        result = self.run_meeting(gh, models, MEETING_TOPIC="議題", MEETING_ROUNDS="1")
+        self.assertEqual([c[0] for c in models.calls][:4], ["c", "g", "ge", "c"])
+        self.assertEqual(result["skipped"], [])
+        self.assertTrue(any("Claude" in body and "1周目" in body for _, body in gh.posted))
+
+    def test_seat_that_keeps_failing_is_not_called_again(self):
+        gh, models = FakeGitHub(), FakeModels(fail={"c"})
+        result = self.run_meeting(gh, models, MEETING_TOPIC="議題", MEETING_ROUNDS="3")
+        self.assertEqual(sum(1 for c in models.calls if c[0] == "c"), 2)   # 1周目と、その後回しの2回だけ(まとめはGPTが先に引き受ける)
+        self.assertEqual(result["skipped"], ["Claude(1周目)", "Claude(2周目)", "Claude(3周目)"])
+        self.assertIn("まとめ(GPT)", gh.posted[-1][1])
+
+
+if __name__ == "__main__":
+    unittest.main()
