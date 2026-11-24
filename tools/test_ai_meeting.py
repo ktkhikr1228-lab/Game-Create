@@ -438,6 +438,17 @@ class StreamTest(unittest.TestCase):
         self.assertEqual(models.chat("m", "s", "u"), "ok")
         self.assertEqual(waits, [m.RETRY_WAITS[0]])
 
+    def test_stream_cut_off_before_the_end_is_retried(self):
+        cut = sse("途中まで").replace("data: [DONE]\n\n", "")
+        replies = [cut, sse("全部")]
+        waits = []
+        models = m.Models("https://x/v1", "k", opener=lambda r, timeout: Reply(replies.pop(0)), sleep=waits.append,
+                          interval=0, log=lambda *a, **k: None)
+        self.assertEqual(models.chat("m", "s", "u"), "全部")
+        self.assertEqual(waits, [m.RETRY_WAITS[0]])
+        finish_only = 'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}\n\n'
+        self.assertEqual(m.read_reply(finish_only), "ok")   # [DONE] がなくても、終わりの理由があれば完成とみなす
+
     def test_stream_can_be_turned_off(self):
         router = m.Router({"AI_API_BASE": "https://gw/v1", "AI_API_KEY": "k", "AI_STREAM": "0"}, m.parse_models("A=a,B=b"))
         self.assertFalse(router.routes[""].stream)

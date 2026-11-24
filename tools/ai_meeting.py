@@ -324,13 +324,16 @@ def read_reply(text: str) -> str:
 
     if not re.match(r"\s*(data|event|:)", text):   # まとめて返る形(ストリーミングを無視する入口もある)
         return join(json.loads(text)["choices"][0]["message"]["content"])
-    parts = []
+    parts, finished = [], False
     for line in text.splitlines():
         line = line.strip()
         if not line.startswith("data:"):
             continue
         data = line[5:].strip()
-        if not data or data == "[DONE]":
+        if data == "[DONE]":
+            finished = True
+            continue
+        if not data:
             continue
         chunk = json.loads(data)
         if chunk.get("error"):
@@ -338,8 +341,11 @@ def read_reply(text: str) -> str:
             raise StreamError(str(error.get("code") or error.get("type") or "error") if isinstance(error, dict) else "error")
         for choice in chunk.get("choices") or []:
             parts.append(join((choice.get("delta") or {}).get("content")))
+            finished = finished or bool(choice.get("finish_reason"))
     if not parts and '"choices"' not in text:
         raise ValueError("no choices")
+    if not finished:   # 終わりの合図がないまま切れた返答は、途中までの文なので使わない(やり直す)
+        raise StreamError("返答が途中で切れました")
     return "".join(parts)
 
 
