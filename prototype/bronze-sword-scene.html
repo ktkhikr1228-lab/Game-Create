@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1b2633">
+<title>青銅の剣の場面（使い捨て試作）</title>
+<!-- 使い捨ての試作。本番のベースにはしない（docs/design.md「試作は使い捨て」）
+     確かめること：銅の剣を持ったプレイヤーが、どこで初めて青銅の剣を作りたくなるか（design.md 11章）
+     歩く・跳ぶ・掘る処理は prototype/play-sandbox.html（PR #28、worldgen-sandbox ブランチ）から写して、体を2×3ブロックにした。
+     地図は場面用に手で並べたもの（ランダム生成はしない）。外部の素材・ライブラリは使っていない -->
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: #eee;
+    font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+  canvas { position: fixed; inset: 0; display: block; image-rendering: pixelated; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+
+  #top { position: fixed; top: calc(env(safe-area-inset-top) + 6px); left: calc(env(safe-area-inset-left) + 8px);
+    right: calc(env(safe-area-inset-right) + 8px); display: flex; gap: 8px; align-items: flex-start; pointer-events: none; }
+  #status { flex: 1; min-width: 0; }
+  #where { font-size: 13px; text-shadow: 0 1px 2px #000, 0 0 4px #000; white-space: nowrap; }
+  #hpBox { width: 120px; height: 6px; background: rgba(0,0,0,.5); border-radius: 3px; margin-top: 4px; overflow: hidden; }
+  #hp { height: 100%; width: 100%; background: #e05050; transition: width .2s; }
+  #hotbar { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; pointer-events: auto; max-width: 75vw; }
+  .slot { position: relative; min-width: 38px; height: 38px; padding: 0 6px; border: 2px solid rgba(255,255,255,.25); border-radius: 6px;
+    background: rgba(0,0,0,.5); font-size: 11px; line-height: 1.1; display: flex; align-items: center; gap: 4px; }
+  .slot.sel { border-color: #ffd34a; }
+  .slot i { display: inline-block; width: 6px; height: 22px; border-radius: 2px; transform: rotate(35deg); }
+  .slot.ore { padding: 0; width: 34px; min-width: 34px; height: 34px; justify-content: center; cursor: default; }
+  .slot.ore i { width: 18px; height: 18px; transform: none; }
+  .slot.ore b { position: absolute; right: 2px; bottom: 0; font-size: 10px; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  .topBtn { pointer-events: auto; width: 38px; height: 38px; border-radius: 10px; border: 1px solid rgba(255,255,255,.3); background: rgba(0,0,0,.45); font-size: 18px; }
+  body.debug #dbgBtn { background: #6a3fa0; }
+
+  #toast { position: fixed; top: calc(env(safe-area-inset-top) + 96px); left: 50%; transform: translate(-50%, -6px); opacity: 0; max-width: 92vw;
+    background: rgba(0,0,0,.7); padding: 6px 14px; border-radius: 16px; font-size: 14px; transition: .25s; pointer-events: none; text-align: center; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  /* 近くのものを調べるボタン（PC でも出る） */
+  #useBtn { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom) + 96px); padding: 10px 18px;
+    border-radius: 22px; border: 2px solid #ffd34a; background: rgba(20,20,20,.75); font-size: 15px; z-index: 3; }
+  @media (pointer: fine) { body:not(.touch) #useBtn { bottom: 28px; } }
+
+  /* スマホの操作ボタン */
+  #controls { position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 14px); display: none; justify-content: space-between;
+    padding: 0 calc(env(safe-area-inset-right) + 14px) 0 calc(env(safe-area-inset-left) + 14px); pointer-events: none; }
+  @media (pointer: coarse) { #controls { display: flex; } }
+  body.touch #controls { display: flex; }
+  .cluster { display: flex; gap: 10px; align-items: flex-end; pointer-events: auto; }
+  .pad { width: 64px; height: 64px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); background: rgba(0,0,0,.35);
+    font-size: 24px; display: grid; place-items: center; touch-action: none; }
+  .pad.small { width: 50px; height: 50px; font-size: 18px; }
+  .pad.down { background: rgba(255,255,255,.3); }
+
+  /* デバッグ */
+  #dbgPanel { display: none; position: fixed; top: calc(env(safe-area-inset-top) + 50px); right: calc(env(safe-area-inset-right) + 8px);
+    width: 170px; background: rgba(20,14,32,.9); border: 1px solid #6a3fa0; border-radius: 10px; padding: 8px; font-size: 12px; z-index: 4; }
+  body.debug #dbgPanel { display: block; }
+  #dbgPanel .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  #dbgPanel button { padding: 6px 2px; border-radius: 6px; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.06); font-size: 12px; }
+  #dbgPanel button.on { background: #6a3fa0; border-color: #c9a8ff; }
+
+  /* 重ねて出す画面（書き付け・るつぼ・記録・説明） */
+  .sheet { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.6); z-index: 10; touch-action: pan-y; }
+  .sheet > .card { width: min(420px, calc(100vw - 24px)); max-height: calc(100% - 24px); overflow-y: auto; background: #1b2633; border-radius: 12px;
+    padding: 16px 18px; font-size: 14px; line-height: 1.7; user-select: text; -webkit-user-select: text; }
+  .sheet h2 { margin: 0 0 8px; font-size: 16px; }
+  .sheet ul { margin: 0; padding-left: 1.2em; }
+  .sheet .ok { margin-top: 12px; width: 100%; padding: 10px; border-radius: 8px; border: 0; background: #e0a020; color: #111; font-weight: bold; }
+  .note { background: #e9dfc6; color: #2b2116; border-radius: 6px; padding: 12px 14px; font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; white-space: pre-line; }
+  #logText { font: 12px/1.6 ui-monospace, Menlo, monospace; white-space: pre-wrap; background: #0e151d; padding: 8px 10px; border-radius: 6px; margin: 8px 0 0; }
+  .row2 { display: flex; gap: 8px; } .row2 > button { flex: 1; }
+  .sub { padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.3); background: transparent; margin-top: 12px; width: 100%; }
+
+  /* るつぼ：1画面で 金属 → 配合 → 量。下に固定するのは「作る」と合計消費だけ（PR #36） */
+  #crucible > .card { padding: 0; display: flex; flex-direction: column; max-height: calc(100% - 16px); }
+  #cruBody { overflow-y: auto; padding: 14px 16px 10px; touch-action: pan-y; }
+  #crucible h2 { display: flex; justify-content: space-between; align-items: center; }
+  #crucible h2 button { border: 0; background: transparent; font-size: 20px; padding: 0 4px; }
+  .step { font-size: 12px; color: #9fb3c8; margin: 10px 0 4px; }
+  .metals { display: flex; gap: 6px; flex-wrap: wrap; }
+  .metal { padding: 6px 10px; border-radius: 16px; border: 2px solid rgba(255,255,255,.25); background: rgba(255,255,255,.05); font-size: 13px; }
+  .metal.on { border-color: #ffd34a; background: rgba(255,211,74,.12); }
+  .metal:disabled { opacity: .4; }
+  .ratio { display: flex; align-items: center; gap: 8px; }
+  .pm { width: 44px; height: 44px; border-radius: 10px; border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.08); font-size: 22px; }
+  .pm:disabled { opacity: .3; }
+  .ratioVal { flex: 1; text-align: center; font-size: 18px; font-weight: bold; }
+  .ratioVal small { display: block; font-size: 12px; font-weight: normal; color: #ffd34a; }
+  .scale { position: relative; height: 34px; margin: 6px 4px 0; }
+  .scale .zone { position: absolute; top: 0; height: 12px; border-radius: 3px; font-size: 9px; line-height: 12px; text-align: center; color: #111; overflow: hidden; white-space: nowrap; }
+  .scale .tick { position: absolute; top: 14px; width: 26px; margin-left: -13px; height: 20px; padding: 0; border: 0; background: transparent; font-size: 10px; color: #9fb3c8; }
+  .scale .tick::before { content: ""; display: block; width: 2px; height: 6px; margin: 0 auto 1px; background: #9fb3c8; }
+  .scale .tick.cur { color: #ffd34a; font-weight: bold; } .scale .tick.cur::before { background: #ffd34a; height: 8px; }
+  .lockMsg { font-size: 12px; color: #ffd34a; margin-top: 4px; }
+  .preview { display: grid; grid-template-columns: repeat(3, auto 1fr); gap: 2px 10px; font-size: 13px; background: rgba(255,255,255,.04); border-radius: 8px; padding: 6px 10px; }
+  .preview b { font-weight: normal; letter-spacing: 1px; }
+  .amount { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; }
+  .amount .lbl { font-size: 13px; } .amount .lbl small { display: block; color: #9fb3c8; font-size: 11px; }
+  .amount .ctl { display: flex; align-items: center; gap: 6px; } .amount .ctl span { min-width: 34px; text-align: center; font-size: 17px; font-weight: bold; }
+  .mats { font-size: 13px; } .mats .short { color: #ff8a7a; }
+  #cruBar { border-top: 1px solid rgba(255,255,255,.15); padding: 10px 16px calc(env(safe-area-inset-bottom) + 12px); display: flex; gap: 10px; align-items: center; background: #16202b; border-radius: 0 0 12px 12px; }
+  #cruTotal { flex: 1; font-size: 13px; }
+  #makeBtn { padding: 12px 22px; border-radius: 10px; border: 0; background: #e0a020; color: #111; font-weight: bold; font-size: 15px; }
+  #makeBtn:disabled { background: #555; color: #999; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="top">
+  <div id="status">
+    <div id="where">…</div>
+    <div id="hpBox"><div id="hp"></div></div>
+    <div id="hotbar"></div>
+  </div>
+  <button class="topBtn" id="logBtn" title="記録（L キー）">📝</button>
+  <button class="topBtn" id="dbgBtn" title="デバッグ（` キー）">🐞</button>
+</div>
+<div id="toast"></div>
+<button id="useBtn" hidden>✋ 調べる</button>
+
+<div id="controls">
+  <div class="cluster">
+    <button class="pad" data-key="left">◀</button>
+    <button class="pad small" data-key="down">▼</button>
+    <button class="pad" data-key="right">▶</button>
+  </div>
+  <div class="cluster">
+    <button class="pad" data-key="attack">⚔</button>
+    <button class="pad" data-key="jump">⤒</button>
+  </div>
+</div>
+
+<div id="dbgPanel">
+  <div class="grid">
+    <button data-dbg="fly">飛ぶ</button>
+    <button data-dbg="instant">すぐ掘れる</button>
+    <button data-dbg="light">明るく</button>
+    <button data-dbg="god">無敵</button>
+    <button id="giveTin">錫石＋3</button>
+    <button id="toTown">町へ</button>
+    <button id="toBeetle">甲殻虫の前へ</button>
+    <button id="toRiver">川へ</button>
+  </div>
+</div>
+
+<div class="sheet" id="help">
+  <div class="card">
+    <h2>青銅の剣の場面（試作）</h2>
+    <p style="margin:0 0 8px">銅の剣を持って、町の東の洞窟へ。行き詰まったら、まわりを調べてみてください。</p>
+    <ul>
+      <li><b>スマホ</b>：◀ ▶ で移動、⤒ でジャンプ（水の中では泳いで上がる）、⚔ で剣を振る</li>
+      <li>ブロックを<b>長押し</b>で掘る。届くのは自分のまわり4〜5ブロック</li>
+      <li><b>PC</b>：A D / ← → で移動、W・Space でジャンプ、J か右クリックで剣、マウス長押しで掘る、E で調べる</li>
+      <li>✋ が出たら、近くのものを調べられる</li>
+      <li>上の剣のボタンで、持つ剣を替えられる</li>
+      <li>📝 は遊んだ記録（どこで何が起きたか）。終わったらコピーして送ってください</li>
+    </ul>
+    <button class="ok" id="helpOk">はじめる</button>
+  </div>
+</div>
+
+<div class="sheet" id="noteSheet" hidden>
+  <div class="card">
+    <h2 id="noteTitle"></h2>
+    <div class="note" id="noteText"></div>
+    <button class="ok" id="noteOk">とじる</button>
+  </div>
+</div>
+
+<div class="sheet" id="logSheet" hidden>
+  <div class="card">
+    <h2 id="logTitle">記録</h2>
+    <div id="logLead" style="font-size:13px"></div>
+    <pre id="logText"></pre>
+    <div class="row2">
+      <button class="sub" id="logCopy">記録をコピー</button>
+      <button class="sub" id="logRestart">最初から</button>
+    </div>
+    <button class="ok" id="logOk">とじる</button>
+  </div>
+</div>
+
+<div class="sheet" id="crucible" hidden>
+  <div class="card">
+    <div id="cruBody">
+      <h2><span>るつぼ</span><button id="cruClose" aria-label="閉じる">✕</button></h2>
+      <div id="cruSmelt" style="font-size:12px;color:#9fb3c8"></div>
+
+      <div class="step">① 金属を選ぶ（2つまで）</div>
+      <div class="metals" id="cruMetals"></div>
+
+      <div id="cruRatioBox">
+        <div class="step">② 配合を選ぶ（10%刻み）</div>
+        <div class="ratio">
+          <button class="pm" id="snMinus" aria-label="錫を減らす">−</button>
+          <div class="ratioVal" id="ratioVal"></div>
+          <button class="pm" id="snPlus" aria-label="錫を増やす">＋</button>
+        </div>
+        <div class="scale" id="scale"></div>
+        <div class="lockMsg" id="lockMsg"></div>
+        <div class="step">作る前の見込み（銅の剣とくらべて）</div>
+        <div class="preview" id="preview"></div>
+
+        <div class="step">③ 量を選ぶ</div>
+        <div class="amount">
+          <div class="lbl">1本あたりの投入量（品質）<small id="qInfo"></small></div>
+          <div class="ctl"><button class="pm" id="qMinus">−</button><span id="qVal"></span><button class="pm" id="qPlus">＋</button></div>
+          <div class="lbl">作る本数<small id="nInfo"></small></div>
+          <div class="ctl"><button class="pm" id="nMinus">−</button><span id="nVal"></span><button class="pm" id="nPlus">＋</button></div>
+        </div>
+        <div class="step">材料（必要／利用可能・工房の箱を含む）</div>
+        <div class="mats" id="mats"></div>
+      </div>
+    </div>
+    <div id="cruBar">
+      <div id="cruTotal"></div>
+      <button id="makeBtn">青銅の剣を作る</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+/* ================= 定数 ================= */
+const T = 18;                       // 1ブロック = 18px
+// 歩く・跳ぶの数値は PR #28 と同じ。ジャンプだけ少し上げて、4ブロックの段差に余裕をもって乗れるようにした（PR #31：4ブロック登れる）
+const PHYS = {gravity: 900, jump: 395, walk: 140, maxFall: 620, swim: 80, waterGravity: 260, waterFall: 90, fly: 420};
+const PLAYER = {w: 32, h: 52};      // 2×3ブロック（36×54px）より少しだけ小さく。幅2・高さ3の通路をちょうど通れる
+const REACH = 4.5;
+const $ = id => document.getElementById(id);
+const canvas = $('game'), ctx = canvas.getContext('2d');
+const params = new URLSearchParams(location.search);
+
+/* ---------- ブロック ---------- */
+const BLOCKS = [], B = {};
+function def(key, name, color, opt = {}) {
+  const id = BLOCKS.length;
+  BLOCKS.push({id, key, name, color, solid: true, mine: .55, ...opt}); B[key] = id; return id;
+}
+def('AIR', '空気', '#000', {solid: false, mine: Infinity});
+def('GRASS', '草地', '#5f8a3e', {mine: .3});
+def('DIRT', '土', '#7a5a3f', {mine: .3});
+def('STONE', '岩', '#77695c', {mine: .6});
+def('GRAVEL', '砂利', '#8d8478', {mine: .4});
+def('BEDROCK', '硬い岩盤', '#3d3946', {mine: Infinity});
+def('WATER', '水', '#3b6fb5', {solid: false, mine: Infinity});
+def('PLANK', '町の床', '#a8865a', {mine: Infinity});
+def('NATIVECU', '自然銅', '#e0874a', {mine: .7, ore: true, host: 'STONE'});
+def('CASSITERITE', '錫石', '#3a2a22', {mine: .7, ore: true, host: 'GRAVEL', glint: '#d9c9a8'});
+const shade = (hex, f) => { const n = parseInt(hex.slice(1).padEnd(6, hex.slice(1)), 16); const c = hex.length === 4 ? [parseInt(hex[1] + hex[1], 16), parseInt(hex[2] + hex[2], 16), parseInt(hex[3] + hex[3], 16)] : [n >> 16 & 255, n >> 8 & 255, n & 255]; return `rgb(${Math.min(255, c[0] * f) | 0},${Math.min(255, c[1] * f) | 0},${Math.min(255, c[2] * f) | 0})`; };
+const PAL = BLOCKS.map(b => [0.88, 0.94, 1, 1.06].map(f => shade(b.color, f)));
+const WALL = BLOCKS.map(b => shade(b.color, .32));
+const tileShade = (x, y) => (Math.imul(x, 73856093) ^ Math.imul(y, 19349663)) >>> 0 & 3;
+
+/* ---------- 金属と剣（数値はすべて仮。design.md 3章「硬さ：硬い殻に弾かれないか」） ---------- */
+const SHELL_HARD = 5;               // 甲殻を割るのに要る硬さ
+// 錫の割合（%）ごとの性能。銅の剣を基準に、作る前は矢印だけで見せる
+const ALLOY = {
+  0:  {hard: 3, tough: 7, rust: 4},
+  10: {hard: 6, tough: 6, rust: 6},
+  20: {hard: 7, tough: 4, rust: 6},
+  30: {hard: 8, tough: 2, rust: 7},
+  40: {hard: 8, tough: 1, rust: 7},
+  50: {hard: 7, tough: 1, rust: 7},
+};
+// 名前つき合金の区画（目盛りに合わせて置く。区画の中に選べる比率が最低1つある）
+const ZONES = [{from: 10, to: 10, name: '青銅', color: '#c9a35a'}, {from: 20, to: 30, name: '鐘の青銅', color: '#e2c27a'}];
+const zoneName = sn => (ZONES.find(z => sn >= z.from && sn <= z.to) || {}).name || (sn ? '名もない合金' : '銅');
+const MAX_QUALITY = 3;              // 序盤の炉で入れられる段の上限
+
+/* ================= 地図（手で並べる） ================= */
+const W = 122, H = 36, SURF = 12;   // SURF：地表の高さ（この行が草地）
+const blocks = new Uint8Array(W * H);
+const bg = new Uint8Array(W * H);   // 1 = 地下の空洞（奥に壁を描く）
+const idx = (x, y) => y * W + x;
+function fill(x0, y0, x1, y1, id) { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (x >= 0 && y >= 0 && x < W && y < H) blocks[idx(x, y)] = id; }
+function carve(x0, y0, x1, y1) { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { blocks[idx(x, y)] = B.AIR; if (y >= SURF) bg[idx(x, y)] = 1; } }
+
+const PLACES = [];                  // 地名（x の範囲）
+const ents = [];                    // 調べられるもの・敵
+let spawn = null;
+const MARK = {};                    // 場所の目印（デバッグの移動先・記録用）
+
+function buildMap() {
+  fill(0, SURF, W - 1, SURF, B.GRASS);
+  fill(0, SURF + 1, W - 1, SURF + 3, B.DIRT);
+  fill(0, SURF + 4, W - 1, H - 1, B.STONE);
+  fill(0, 0, 0, H - 1, B.BEDROCK); fill(W - 1, 0, W - 1, H - 1, B.BEDROCK); fill(0, H - 1, W - 1, H - 1, B.BEDROCK);
+
+  // --- 西の川：深さ5の水、川底は砂利、ところどころ錫石 ---
+  PLACES.push({x0: 1, x1: 24, name: '西の川'});
+  fill(4, SURF, 22, SURF + 4, B.WATER);
+  fill(3, SURF + 5, 23, SURF + 6, B.GRAVEL);
+  fill(3, SURF, 3, SURF + 4, B.GRAVEL); fill(23, SURF, 23, SURF + 4, B.GRAVEL);   // 岸
+  for (const [x, y] of [[6, 5], [9, 6], [12, 5], [15, 5], [18, 6], [20, 5]]) blocks[idx(x, SURF + y)] = B.CASSITERITE;
+  MARK.river = [13, SURF - 1];
+
+  // --- 町：板張りの地面と鍛冶場 ---
+  PLACES.push({x0: 25, x1: 61, name: '鉱山町'});
+  fill(27, SURF, 60, SURF, B.PLANK);
+  ents.push({kind: 'forge', x: 33, y: SURF, w: 13, h: 6});                       // 建物（背景の飾り）
+  ents.push({kind: 'crucible', x: 41, y: SURF, label: 'るつぼ'});
+  ents.push({kind: 'note', x: 35, y: SURF, label: '壁の書き付け', id: 'forge'});
+  ents.push({kind: 'sign', x: 53, y: SURF, label: '立て札', id: 'sign'});
+  spawn = [47, SURF - 1];
+
+  // --- 東の洞窟：入口から下っていく坑道（高さ4、幅は広め） ---
+  PLACES.push({x0: 62, x1: 85, name: '東の洞窟', under: true});
+  const floorAt = x => SURF + Math.max(0, Math.floor((x - 66) / 2));             // 2マスごとに1段下がる
+  for (let x = 64; x <= 85; x++) carve(x, floorAt(x) - 4, x, floorAt(x) - 1);
+  carve(62, SURF - 4, 65, SURF - 1);
+  // 坑道の壁に自然銅
+  for (const [x, y] of [[70, 0], [73, 4], [77, 1], [80, 6], [83, 7], [75, 7]]) { const f = Math.min(floorAt(x), SURF + 10); const yy = y < 4 ? f - 5 : f + (y - 4); if (blocks[idx(x, yy)] !== B.AIR) blocks[idx(x, yy)] = B.NATIVECU; }
+  // 柔らかい敵（銅の剣で倒せる）
+  ents.push({kind: 'enemy', type: 'grub', x: 72, y: floorAt(72)});
+  ents.push({kind: 'enemy', type: 'grub', x: 79, y: floorAt(79)});
+
+  // --- 甲殻虫の通路と奥の部屋：まわりは掘れない岩盤（回り込めないように） ---
+  const F = SURF + 10;              // 通路の床（坑道の下り坂の終わりと同じ高さ）
+  PLACES.push({x0: 86, x1: 100, name: '狭い通路', under: true});
+  PLACES.push({x0: 101, x1: W - 1, name: '奥の空洞', under: true});
+  fill(86, SURF + 2, W - 1, H - 1, B.BEDROCK);
+  carve(86, F - 4, 87, F - 1);                                                    // 坂の終わりからつながる入口
+  carve(88, F - 3, 100, F - 1);                                                   // 高さ3：跳び越せない
+  carve(101, F - 6, 117, F - 1);                                                  // 奥の空洞（上にも岩盤を残して、地上から掘り抜けないように）
+  ents.push({kind: 'note', x: 84, y: floorAt(84), label: '落ちている書き付け', id: 'cave'});
+  ents.push({kind: 'enemy', type: 'beetle', x: 95, y: F, min: 88, max: 100});
+  ents.push({kind: 'lamp', x: 104, y: F - 5});
+  ents.push({kind: 'lamp', x: 115, y: F - 5});
+  ents.push({kind: 'mine', x: 108, y: F, label: '廃坑の入口'});                  // 体2人分の幅（4ブロック）
+  MARK.beetle = [84, floorAt(84) - 1];
+}
+buildMap();
+
+const tileAt = (x, y) => (x < 0 || x >= W || y < 0 || y >= H) ? B.BEDROCK : blocks[idx(x, y)];
+const isSolid = id => BLOCKS[id].solid;
+
+/* ---------- 書き付け（世界の住人の言葉） ---------- */
+const NOTES = {
+  sign: {title: '立て札', text: '東　洞窟\n西　川\n\n鍛冶場のるつぼは、だれが使ってもよい。'},
+  cave: {title: '落ちている書き付け', text: '岩殻虫の背は、石よりも硬い。\n銅の刃では、こぼれて跳ね返るばかりだ。\n\n親方の話では、銅に錫を溶かし込むと刃が締まるという。\n錫石は西の川の底にある。黒っぽくて、手に持つと見た目よりずっと重い石だ。'},
+  forge: {title: '壁の書き付け', text: 'るつぼの心得\n\nはじめの一度は、銅九に錫一。昔からの割合だ。\n慣れたら錫を増やしても減らしてもよい。\nただし錫を入れすぎると、硬くはなるが、ぽきりと折れやすくなる。\n\n一本に注ぎ込む量を増やすほど、よい刃になる。'},
+};
+
+/* ================= 状態 ================= */
+let player, cam = {x: 0, y: 0}, scale = 1, dpr = 1;
+const ores = new Map();             // 持っている鉱石（鉱石袋）
+const bars = {cu: 12, sn: 0};       // 工房の箱の金属（本）。最初から銅が12本ある
+const swords = [{id: 0, name: '銅の剣', sn: 0, q: 1, color: '#c87533'}];
+let held = 0;                       // 持っている剣の番号
+let firstAlloyDone = false;
+let mining = null, pointer = null, toastTimer = 0, lastPlace = '';
+const input = {left: false, right: false, up: false, down: false, jump: false, attack: false};
+const dbg = {on: false, fly: false, instant: false, light: false, god: false};
+let paused = false, ended = false;
+const t0 = performance.now();
+let playTime = 0;
+const sparks = [];
+
+/* ---------- 記録（オーナーが「どこで作りたくなったか」を見るため） ---------- */
+const log = [];
+const once = new Set();
+const counters = {bounce: 0, grubKills: 0, deaths: 0};
+const fmtT = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+function record(key, text, repeat = false) {
+  if (!repeat && once.has(key)) return false;
+  once.add(key); log.push({t: playTime, text}); return true;
+}
+
+/* ================= 画面の大きさ ================= */
+let zoomBlocks = +(params.get('zoom') || 0) || (matchMedia('(pointer: coarse)').matches ? 20 : 24);
+function resize() {
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.round(innerWidth * dpr); canvas.height = Math.round(innerHeight * dpr);
+  canvas.style.width = innerWidth + 'px'; canvas.style.height = innerHeight + 'px';
+  scale = Math.min(innerWidth, innerHeight) / zoomBlocks / T * dpr;
+}
+const viewW = () => canvas.width / scale, viewH = () => canvas.height / scale;
+
+/* ================= 物理（PR #28 から写した。体の大きさだけ違う） ================= */
+function overlaps(px, py, w, h, test) {
+  const x0 = Math.floor((px - w / 2) / T), x1 = Math.floor((px + w / 2 - .01) / T);
+  const y0 = Math.floor((py - h) / T), y1 = Math.floor((py - .01) / T);
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (test(tileAt(x, y))) return true;
+  return false;
+}
+const bodyHits = (px, py, w = PLAYER.w, h = PLAYER.h) => overlaps(px, py, w, h, isSolid);
+
+function step(dt) {
+  const p = player;
+  const inWater = overlaps(p.x, p.y - 4, PLAYER.w, PLAYER.h - 8, id => id === B.WATER);
+  const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  if (dir) p.face = dir;
+
+  if (dbg.fly) {
+    const v = (input.up || input.jump ? -1 : 0) + (input.down ? 1 : 0);
+    p.x = Math.max(PLAYER.w, Math.min(W * T - PLAYER.w, p.x + dir * PHYS.fly * dt));
+    p.y = Math.max(PLAYER.h + 1, Math.min(H * T - 1, p.y + v * PHYS.fly * dt));
+    p.vx = p.vy = 0; p.ground = false; return;
+  }
+  for (let k = 0; k < 12 && bodyHits(p.x, p.y); k++) p.y = Math.floor(p.y / T) * T - (k ? T : 0);
+
+  // ノックバック中は横の入力より押される力を優先
+  if (p.kb > 0) { p.kb -= dt; } else p.vx = dir * (inWater ? PHYS.swim : PHYS.walk);
+  if (inWater) {
+    p.vy = Math.min(PHYS.waterFall, p.vy + PHYS.waterGravity * dt);
+    if (input.jump || input.up) p.vy = -PHYS.swim * 1.6;
+  } else {
+    p.vy = Math.min(PHYS.maxFall, p.vy + PHYS.gravity * dt);
+    if ((input.jump || input.up) && p.ground) { p.vy = -PHYS.jump; p.ground = false; }
+  }
+  let nx = p.x + p.vx * dt;
+  if (blockedByBeetle(p.x, nx, p.y)) { nx = p.x; p.vx = 0; }
+  else if (bodyHits(nx, p.y)) {
+    if ((p.ground || inWater) && !bodyHits(nx, p.y - T) && !bodyHits(p.x, p.y - T)) p.y = Math.floor((p.y - T) / T + .5) * T;
+    else { nx = p.x; p.vx = 0; }
+  }
+  p.x = nx;
+  let ny = p.y + p.vy * dt;
+  p.ground = false;
+  if (bodyHits(p.x, ny)) {
+    if (p.vy > 0) { ny = Math.floor(ny / T) * T; p.ground = true; }
+    else ny = Math.floor((ny - PLAYER.h) / T + 1) * T + PLAYER.h;
+    if (bodyHits(p.x, ny)) ny = p.y;
+    p.vy = 0;
+  }
+  p.y = ny;
+  if (!p.ground && p.vy === 0 && bodyHits(p.x, p.y + 1)) p.ground = true;
+  p.inv = Math.max(0, p.inv - dt);
+  if (p.inv <= 0) p.hp = Math.min(100, p.hp + 3 * dt);
+}
+
+/* ================= 敵 ================= */
+const ENEMY = {
+  grub:   {name: 'ぶよ虫', w: 26, h: 16, hp: 2, speed: 28, dmg: 8, color: '#b9a46a'},
+  beetle: {name: '岩殻虫', w: 34, h: 34, hp: 3, speed: 22, dmg: 14, color: '#4d5a52'},
+};
+for (const e of ents) if (e.kind === 'enemy') {
+  Object.assign(e, {px: (e.x + .5) * T, py: e.y * T, vx: 0, vy: 0, dir: -1, hp: ENEMY[e.type].hp, alive: true, stun: 0, flash: 0, home: e.x});
+}
+function enemyStep(e, dt) {
+  const s = ENEMY[e.type];
+  if (!e.alive) return;
+  e.stun = Math.max(0, e.stun - dt); e.flash = Math.max(0, e.flash - dt);
+  if (e.stun <= 0) e.vx = e.dir * s.speed;
+  e.vy = Math.min(PHYS.maxFall, e.vy + PHYS.gravity * dt);
+  let nx = e.px + e.vx * dt;
+  const ahead = nx + e.dir * s.w / 2;
+  const noFloor = !isSolid(tileAt(Math.floor(ahead / T), Math.floor((e.py + 2) / T)));
+  const outRange = e.min !== undefined && (nx / T < e.min || nx / T > e.max + 1);
+  // 岩殻虫は自分から主人公の体に入り込まない（入り込むと、すり抜けの元になる）
+  const intoPlayer = e.type === 'beetle' && !dbg.fly && player.y - PLAYER.h < e.py && player.y > e.py - s.h &&
+    Math.abs(nx - player.x) < (PLAYER.w + s.w) / 2 && Math.abs(nx - player.x) < Math.abs(e.px - player.x);
+  if (intoPlayer) { nx = e.px; e.vx = 0; }
+  else if (bodyHits(nx, e.py, s.w, s.h) || (e.stun <= 0 && (noFloor || outRange))) { nx = e.px; e.dir *= -1; e.vx = 0; }
+  e.px = nx;
+  let ny = e.py + e.vy * dt;
+  if (bodyHits(e.px, ny, s.w, s.h)) { if (e.vy > 0) ny = Math.floor(ny / T) * T; else ny = e.py; e.vy = 0; }
+  e.py = ny;
+  // 体当たり
+  const p = player;
+  if (p.inv <= 0 && !dbg.fly && Math.abs(p.x - e.px) < (PLAYER.w + s.w) / 2 && p.y - PLAYER.h < e.py && p.y > e.py - s.h) {
+    if (!dbg.god) p.hp -= s.dmg;
+    p.inv = .9; p.kb = .25; p.vx = (p.x < e.px ? -1 : 1) * 190; p.vy = -170;
+    if (e.type === 'beetle') record('beetleHurt', '岩殻虫にぶつかられた');
+    if (p.hp <= 0) die();
+  }
+}
+// 岩殻虫は通せんぼする（すり抜けて奥へ行けないように）
+// 重なっているときも、岩殻虫の中心に近づく向きには動けない（離れる向きだけ動ける）
+function blockedByBeetle(fromX, toX, py) {
+  for (const e of ents) {
+    if (e.kind !== 'enemy' || e.type !== 'beetle' || !e.alive) continue;
+    const s = ENEMY[e.type];
+    if (!(py - PLAYER.h < e.py && py > e.py - s.h)) continue;
+    if (Math.abs(toX - e.px) < (PLAYER.w + s.w) / 2 - 2 && Math.abs(toX - e.px) <= Math.abs(fromX - e.px)) return true;
+  }
+  return false;
+}
+function die() {
+  counters.deaths++; record('death' + counters.deaths, `倒れた（${counters.deaths}回目）`, true);
+  player.hp = 100; teleport(...spawn); toast('倒れた…町で目を覚ました');
+}
+
+/* ================= 剣 ================= */
+let swing = 0, swingCd = 0, attackQueued = false;   // 短く押しても1回は振れるように、押したら予約しておく
+function swordStats(sw) { return ALLOY[sw.sn]; }
+function attack() {
+  if (swingCd > 0 || paused) return;
+  attackQueued = false;
+  swing = .18; swingCd = .38;
+  const sw = swords[held], st = swordStats(sw), p = player;
+  const hx0 = p.face > 0 ? p.x : p.x - 46, hx1 = p.face > 0 ? p.x + 46 : p.x, hy0 = p.y - PLAYER.h - 6, hy1 = p.y + T * .6;   // 坂の上下の敵にも当たるよう、縦は少し広め
+  for (const e of ents) {
+    if (e.kind !== 'enemy' || !e.alive) continue;
+    const s = ENEMY[e.type];
+    if (e.px + s.w / 2 < hx0 || e.px - s.w / 2 > hx1 || e.py < hy0 || e.py - s.h > hy1) continue;
+    if (e.type === 'beetle' && st.hard < SHELL_HARD) {
+      // 弾かれる：ダメージなし、火花、少し押し戻される
+      counters.bounce++;
+      const first = record('bounce', `初めて甲殻に弾かれた（${sw.name}）`);
+      if (!first && [3, 10, 20].includes(counters.bounce)) record('bounce' + counters.bounce, `甲殻に${counters.bounce}回弾かれた（${sw.name}）`, true);
+      spark(e.px - p.face * s.w / 2, e.py - s.h / 2, '#fff2a0', 10);
+      p.kb = .18; p.vx = -p.face * 150;
+      toast(counters.bounce === 1 ? 'カン！ 刃が甲殻に弾かれた' : 'カン！');
+      e.stun = .2;
+      continue;
+    }
+    if (e.type === 'beetle' && st.tough <= 2 && Math.random() < .5) {
+      spark(e.px, e.py - s.h / 2, '#ffffff', 6); toast('刃が欠けて、うまく入らない'); record('chip', `硬いが脆い刃（錫${sw.sn}%）で甲殻を叩いて欠けた`); continue;
+    }
+    const dmg = 1 + (sw.q - 1) * .5;
+    e.hp -= dmg; e.flash = .15; e.stun = .3; e.vx = p.face * 120; e.dir = p.face;
+    spark(e.px, e.py - s.h / 2, e.type === 'beetle' ? '#d8e0d0' : '#e8d890', 6);
+    if (e.type === 'beetle') record('beetleHit', `初めて甲殻に刃が通った（${sw.name}）`);
+    if (e.hp <= 0) {
+      e.alive = false;
+      if (e.type === 'grub') { counters.grubKills++; record('grub', `初めてぶよ虫を倒した（${sw.name}）`); }
+      else { record('beetleKill', `岩殻虫の甲殻を割った（${sw.name}）`); toast('甲殻が割れた！ 奥へ進める'); spark(e.px, e.py - s.h / 2, '#9fb0a0', 24); }
+    }
+  }
+}
+function spark(x, y, color, n) { for (let i = 0; i < n; i++) sparks.push({x, y, vx: (Math.random() - .5) * 220, vy: -Math.random() * 200, t: .35 + Math.random() * .2, color}); }
+
+/* ================= 掘る ================= */
+function screenToTile(sx, sy) { return [Math.floor((sx * dpr / scale + cam.x) / T), Math.floor((sy * dpr / scale + cam.y) / T)]; }
+function inReach(tx, ty) { const dx = (tx + .5) * T - player.x, dy = (ty + .5) * T - (player.y - PLAYER.h / 2); return Math.hypot(dx, dy) <= REACH * T; }
+function useTool(dt) {
+  if (!pointer) { mining = null; return; }
+  const [tx, ty] = screenToTile(pointer.sx, pointer.sy);
+  if (!inReach(tx, ty)) { mining = null; return; }
+  const id = tileAt(tx, ty), b = BLOCKS[id];
+  if (!isFinite(b.mine)) {
+    if (pointer.fresh && id === B.BEDROCK) { toast('つるはしが立たない'); record('bedrock', '硬い岩盤を掘ろうとした'); }
+    pointer.fresh = false; mining = null; return;
+  }
+  pointer.fresh = false;
+  const need = dbg.instant ? 0 : b.mine;
+  if (!mining || mining.x !== tx || mining.y !== ty) mining = {x: tx, y: ty, t: 0, need};
+  mining.t += dt;
+  if (mining.t >= mining.need) {
+    blocks[idx(tx, ty)] = B.AIR;
+    if (ty >= SURF) bg[idx(tx, ty)] = 1;
+    // 川底を掘ったら、上の水が流れ込む（ざっくり）
+    if (tileAt(tx, ty - 1) === B.WATER || tileAt(tx - 1, ty) === B.WATER || tileAt(tx + 1, ty) === B.WATER) blocks[idx(tx, ty)] = B.WATER;
+    if (b.ore) {
+      ores.set(id, (ores.get(id) || 0) + 1);
+      if (id === B.CASSITERITE) { if (record('tin', '初めて錫石を掘った')) toast('錫石を見つけた！ 小さいのに、ずしりと重い'); }
+      else if (record('cu', '初めて自然銅を掘った')) toast('自然銅を見つけた！');
+      updateHotbar();
+    }
+    mining = null;
+  }
+}
+
+/* ================= 調べる ================= */
+function nearThing() {
+  const p = player; let best = null, bd = 2.6 * T;
+  for (const e of ents) {
+    if (!['crucible', 'note', 'sign', 'mine'].includes(e.kind)) continue;
+    const d = Math.hypot((e.x + .5) * T - p.x, e.y * T - p.y);
+    if (d < bd) { bd = d; best = e; }
+  }
+  return best;
+}
+function useThing() {
+  const e = nearThing(); if (!e || paused) return;
+  if (e.kind === 'note' || e.kind === 'sign') openNote(e.id);
+  else if (e.kind === 'crucible') openCrucible();
+  else if (e.kind === 'mine') finish();
+}
+function openNote(id) {
+  const n = NOTES[id];
+  record('note-' + id, `「${n.title}」を読んだ`);
+  $('noteTitle').textContent = n.title; $('noteText').textContent = n.text;
+  showSheet('noteSheet');
+}
+function showSheet(id) { paused = true; for (const k in input) input[k] = false; pointer = null; $(id).hidden = false; }
+function hideSheet(id) { $(id).hidden = true; paused = !['help', 'noteSheet', 'logSheet', 'crucible'].every(k => $(k).hidden); }
+
+/* ================= るつぼ ================= */
+const cru = {metals: new Set(['cu']), sn: 10, q: 1, n: 1};
+function openCrucible() {
+  record('crucible', 'るつぼを初めて開いた');
+  // 持っている鉱石は工房に預けて、まとめて金属にする（design.md 10章の案）
+  const cu = ores.get(B.NATIVECU) || 0, sn = ores.get(B.CASSITERITE) || 0;
+  let msg = '';
+  if (cu || sn) {
+    bars.cu += cu; bars.sn += sn; ores.clear(); updateHotbar();
+    msg = `鉱石袋を工房に預けて溶かした：${[cu && `自然銅${cu}個 → 銅${cu}本`, sn && `錫石${sn}個 → 錫${sn}本`].filter(Boolean).join('、')}`;
+  }
+  $('cruSmelt').textContent = msg;
+  if (!firstAlloyDone) cru.sn = 10;
+  showSheet('crucible'); renderCrucible();
+}
+function need() { const per = MAX_Q_UNIT * cru.q; return {cu: per * (100 - cru.sn) / 100 * cru.n, sn: per * cru.sn / 100 * cru.n}; }
+const MAX_Q_UNIT = 10;              // 1段 = 合計10本を配合どおりに割り振る（PR #36）
+function maxCount() { const per = MAX_Q_UNIT * cru.q; const c = per * (100 - cru.sn) / 100, s = per * cru.sn / 100; return Math.floor(Math.min(bars.cu / c, s ? bars.sn / s : Infinity)); }
+function arrow(d) { return d >= 3 ? '↑↑' : d >= 1 ? '↑' : d <= -3 ? '↓↓' : d <= -1 ? '↓' : '→'; }
+function renderCrucible() {
+  const both = cru.metals.has('cu') && cru.metals.has('sn');
+  // ① 金属
+  const mEl = $('cruMetals'); mEl.innerHTML = '';
+  for (const [k, name, have] of [['cu', '銅', bars.cu], ['sn', '錫', bars.sn], ['fe', '鉄（この炉では溶けない）', 0]]) {
+    const b = document.createElement('button');
+    b.className = 'metal' + (cru.metals.has(k) ? ' on' : '');
+    b.textContent = k === 'fe' ? name : `${name}　${have}本`;
+    b.disabled = k === 'fe';
+    b.onclick = () => { if (cru.metals.has(k)) cru.metals.delete(k); else if (cru.metals.size < 2) cru.metals.add(k); renderCrucible(); };
+    mEl.appendChild(b);
+  }
+  $('cruRatioBox').hidden = !both;
+  if (!both) {
+    $('cruTotal').textContent = cru.metals.has('sn') ? '銅と錫を選ぶと青銅になる' : '金属を2つ選ぶ';
+    $('makeBtn').disabled = true; $('makeBtn').textContent = '作る'; return;
+  }
+  // ② 配合
+  const locked = !firstAlloyDone;
+  $('ratioVal').innerHTML = `銅 ${100 - cru.sn} ： 錫 ${cru.sn}<small>${zoneName(cru.sn)}</small>`;
+  $('snMinus').disabled = locked || cru.sn <= 10; $('snPlus').disabled = locked || cru.sn >= 50;
+  const sc = $('scale'); sc.innerHTML = '';
+  const pos = sn => `${(sn / 50) * 100}%`;
+  for (const z of ZONES) { const d = document.createElement('div'); d.className = 'zone'; d.style.left = `calc(${pos(z.from)} - 9px)`; d.style.width = `calc(${pos(z.to)} - ${pos(z.from)} + 18px)`; d.style.background = z.color; d.textContent = z.name; sc.appendChild(d); }
+  for (let sn = 0; sn <= 50; sn += 10) {
+    const t = document.createElement('button'); t.className = 'tick' + (sn === cru.sn ? ' cur' : ''); t.style.left = pos(sn); t.textContent = sn ? `錫${sn}` : '銅';
+    t.onclick = () => { if (!locked && sn >= 10) { cru.sn = sn; clampAmount(); renderCrucible(); } };
+    sc.appendChild(t);
+  }
+  $('lockMsg').textContent = locked ? '🔒 はじめての合金は、昔からの割合（銅9：錫1）で。次からは自分で変えられる' : '';
+  const a = ALLOY[cru.sn], c = ALLOY[0];
+  $('preview').innerHTML = [['硬さ', a.hard - c.hard], ['粘り', a.tough - c.tough], ['耐食', a.rust - c.rust]]
+    .map(([k, d]) => `<span>${k}</span><b>${arrow(d)}</b>`).join('');
+  // ③ 量
+  clampAmount();
+  const per = MAX_Q_UNIT * cru.q;
+  $('qVal').textContent = `${cru.q}段`;
+  $('qInfo').textContent = `1本に 銅${per * (100 - cru.sn) / 100}・錫${per * cru.sn / 100}（この炉は${MAX_QUALITY}段まで）`;
+  const mx = maxCount();
+  $('nVal').textContent = cru.n;
+  $('nInfo').textContent = `最大 ${mx} 本`;
+  $('qMinus').disabled = cru.q <= 1; $('qPlus').disabled = cru.q >= MAX_QUALITY;
+  $('nMinus').disabled = cru.n <= 1; $('nPlus').disabled = cru.n >= Math.max(1, mx);
+  const nd = need();
+  const line = (name, n, have) => `<div class="${n > have ? 'short' : ''}">${name}　${n}／${have}${n > have ? '　足りない' : ''}</div>`;
+  $('mats').innerHTML = line('銅', nd.cu, bars.cu) + line('錫', nd.sn, bars.sn) +
+    (bars.sn < nd.sn ? '<div style="color:#9fb3c8;font-size:12px">錫石を掘ってくれば錫になる</div>' : '');
+  $('cruTotal').textContent = `合計 銅${nd.cu}・錫${nd.sn}`;
+  const ok = nd.cu <= bars.cu && nd.sn <= bars.sn;
+  $('makeBtn').disabled = !ok;
+  $('makeBtn').textContent = `${zoneName(cru.sn)}の剣を作る`;
+}
+function clampAmount() { cru.q = Math.max(1, Math.min(MAX_QUALITY, cru.q)); cru.n = Math.max(1, Math.min(Math.max(1, maxCount()), cru.n)); }
+function make() {
+  const nd = need(); if (nd.cu > bars.cu || nd.sn > bars.sn) return;
+  bars.cu -= nd.cu; bars.sn -= nd.sn;
+  const name = `${zoneName(cru.sn)}の剣`;
+  for (let i = 0; i < cru.n; i++) swords.push({id: swords.length, name, sn: cru.sn, q: cru.q, color: cru.sn >= 30 ? '#d9c38a' : cru.sn >= 20 ? '#c9ad6a' : '#b08d57'});
+  held = swords.length - 1;
+  const a = ALLOY[cru.sn];
+  record(firstAlloyDone ? 'make' + swords.length : 'firstAlloy', `${firstAlloyDone ? '' : '初めての合金：'}${name}を作った（銅${100 - cru.sn}:錫${cru.sn}・${cru.q}段・${cru.n}本）`, true);
+  const wasFirst = !firstAlloyDone;
+  firstAlloyDone = true;
+  updateHotbar(); hideSheet('crucible');
+  toast(`${name}ができた（硬さ${a.hard}・粘り${a.tough}）${wasFirst ? '。次からは配合を変えられる' : ''}`);
+}
+
+/* ================= 終わり・記録 ================= */
+function finish() {
+  if (!ended) { ended = true; record('end', '廃坑の入口に着いた（試作はここまで）'); }
+  openLog(true);
+}
+function logText() {
+  const lines = log.map(l => `${fmtT(l.t)}  ${l.text}`);
+  lines.push('', `弾かれた回数 ${counters.bounce} / ぶよ虫を倒した数 ${counters.grubKills} / 倒れた回数 ${counters.deaths}`);
+  lines.push(`剣：${swords.map(s => s.sn ? `${s.name}(錫${s.sn}%・${s.q}段)` : s.name).join('、')}`);
+  lines.push(`遊んだ時間 ${fmtT(playTime)}`);
+  return lines.join('\n');
+}
+function openLog(end) {
+  $('logTitle').textContent = end ? 'ここまで（試作の終わり）' : '記録';
+  $('logLead').textContent = end ? '廃坑の入口に着きました。下の記録をコピーして、どこで「青銅の剣が欲しい」と思ったかを一言添えて送ってください。' : 'ここまでに起きたこと。時刻は遊びはじめてからの経過時間。';
+  $('logText').textContent = logText();
+  showSheet('logSheet');
+}
+
+/* ================= 持ち物 ================= */
+function updateHotbar() {
+  const bar = $('hotbar'); bar.innerHTML = '';
+  // 剣は同じ作りのものをまとめる
+  const seen = new Map();
+  swords.forEach((s, i) => { const k = `${s.name}|${s.q}`; if (!seen.has(k)) seen.set(k, {i, n: 0}); seen.get(k).n++; });
+  for (const [, {i, n}] of seen) {
+    const s = swords[i], el = document.createElement('button');
+    el.className = 'slot' + (swords[held].name === s.name && swords[held].q === s.q ? ' sel' : '');
+    el.innerHTML = `<i style="background:${s.color}"></i><span>${s.name}${s.sn ? `<br>${s.q}段` : ''}${n > 1 ? ` ×${n}` : ''}</span>`;
+    el.onclick = () => { held = i; updateHotbar(); toast(`${s.name}に持ち替えた`); record('switch' + i, `${s.name}に持ち替えた`); };
+    bar.appendChild(el);
+  }
+  for (const [id, n] of ores) {
+    const el = document.createElement('div'); el.className = 'slot ore'; el.title = BLOCKS[id].name;
+    el.innerHTML = `<i style="background:${BLOCKS[id].color};outline:1px solid ${BLOCKS[id].glint || 'transparent'}"></i><b>${n}</b>`;
+    bar.appendChild(el);
+  }
+}
+
+/* ================= 描画 ================= */
+function toast(msg) { const el = $('toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2600); }
+function placeAt(x) { const tx = x / T; return PLACES.find(p => tx >= p.x0 && tx < p.x1 + 1) || PLACES[1]; }
+
+function render() {
+  const cw = canvas.width, ch = canvas.height, s = scale, sz = Math.ceil(T * s) + 1;
+  const tx0 = Math.floor(cam.x / T), ty0 = Math.floor(cam.y / T), tx1 = Math.ceil((cam.x + viewW()) / T), ty1 = Math.ceil((cam.y + viewH()) / T);
+  const toSx = x => Math.floor((x * T - cam.x) * s), toSy = y => Math.floor((y * T - cam.y) * s);
+  const g = ctx.createLinearGradient(0, 0, 0, ch); g.addColorStop(0, '#5d8fc4'); g.addColorStop(1, '#a9c9e4');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, cw, ch);
+
+  // 鍛冶場の建物（背景）
+  for (const e of ents) if (e.kind === 'forge') {
+    const x = toSx(e.x), y = toSy(e.y - e.h), w = e.w * T * s, h = e.h * T * s;
+    ctx.fillStyle = '#6b4a35'; ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = '#4a3428'; ctx.beginPath(); ctx.moveTo(x - T * s, y); ctx.lineTo(x + w / 2, y - 2.5 * T * s); ctx.lineTo(x + w + T * s, y); ctx.fill();
+    ctx.fillStyle = '#3a2a22'; ctx.fillRect(x + w * .72, y - 3 * T * s, T * s, 2.2 * T * s);   // 煙突
+    ctx.fillStyle = '#e8d6a8'; ctx.font = `${11 * dpr}px sans-serif`; ctx.fillText('鍛冶場', x + 6 * dpr, y + 14 * dpr);
+  }
+
+  for (let y = Math.max(0, ty0); y < Math.min(H, ty1); y++) {
+    const sy = toSy(y);
+    for (let x = Math.max(0, tx0); x < Math.min(W, tx1); x++) {
+      const id = blocks[idx(x, y)], sx = toSx(x), b = BLOCKS[id];
+      const wallId = y < SURF + 4 ? B.DIRT : (x >= 86 && y >= SURF + 2 ? B.BEDROCK : B.STONE);
+      if (id === B.AIR) { if (bg[idx(x, y)]) { ctx.fillStyle = WALL[wallId]; ctx.fillRect(sx, sy, sz, sz); } continue; }
+      const sh = tileShade(x, y);
+      if (b.ore) {
+        ctx.fillStyle = PAL[B[b.host]][sh]; ctx.fillRect(sx, sy, sz, sz);
+        ctx.fillStyle = PAL[id][3]; const q = sz / 6;
+        ctx.fillRect(sx + q, sy + q, q * 1.8, q * 1.8); ctx.fillRect(sx + q * 3.3, sy + q * 2.2, q * 1.8, q * 1.6); ctx.fillRect(sx + q * 1.5, sy + q * 3.7, q * 1.8, q * 1.5);
+        if (b.glint) { ctx.fillStyle = b.glint; ctx.fillRect(sx + q * 1.4, sy + q * 1.2, q * .6, q * .6); ctx.fillRect(sx + q * 3.8, sy + q * 2.4, q * .5, q * .5); }
+        continue;
+      }
+      if (id === B.WATER) { if (bg[idx(x, y)]) { ctx.fillStyle = WALL[wallId]; ctx.fillRect(sx, sy, sz, sz); } ctx.globalAlpha = .72; }
+      ctx.fillStyle = PAL[id][sh]; ctx.fillRect(sx, sy, sz, sz); ctx.globalAlpha = 1;
+    }
+  }
+
+  // 調べられるもの
+  for (const e of ents) {
+    const x = toSx(e.x), y = toSy(e.y);
+    if (e.kind === 'crucible') { ctx.fillStyle = '#5a5a5a'; ctx.fillRect(x - T * s * .5, y - T * s * 1.4, T * s * 2, T * s * 1.4); ctx.fillStyle = '#ff9a3a'; ctx.fillRect(x - T * s * .2, y - T * s * 1.55, T * s * 1.4, T * s * .35); }
+    if (e.kind === 'note') { ctx.fillStyle = '#e9dfc6'; ctx.fillRect(x + T * s * .2, y - T * s * (e.id === 'forge' ? 2.4 : .35), T * s * .7, T * s * .5); }
+    if (e.kind === 'sign') { ctx.fillStyle = '#7b5a33'; ctx.fillRect(x + T * s * .4, y - T * s * 2, T * s * .2, T * s * 2); ctx.fillStyle = '#c9a46b'; ctx.fillRect(x - T * s * .2, y - T * s * 2.2, T * s * 1.4, T * s * .9); }
+    if (e.kind === 'mine') {   // 坑木の枠、幅4ブロック
+      ctx.fillStyle = '#120c08'; ctx.fillRect(x, y - 3.4 * T * s, 4 * T * s, 3.4 * T * s);
+      ctx.fillStyle = '#7b5a33'; ctx.fillRect(x - .3 * T * s, y - 3.8 * T * s, 4.6 * T * s, .45 * T * s); ctx.fillRect(x - .3 * T * s, y - 3.8 * T * s, .4 * T * s, 3.8 * T * s); ctx.fillRect(x + 3.9 * T * s, y - 3.8 * T * s, .4 * T * s, 3.8 * T * s);
+    }
+    if (e.kind === 'lamp') { ctx.fillStyle = '#ffd88a'; ctx.fillRect(x + T * s * .3, y + T * s * .2, T * s * .4, T * s * .5); }
+  }
+  // 敵
+  for (const e of ents) if (e.kind === 'enemy' && e.alive) {
+    const st = ENEMY[e.type], x = (e.px - st.w / 2 - cam.x) * s, y = (e.py - st.h - cam.y) * s, w = st.w * s, h = st.h * s;
+    ctx.fillStyle = e.flash > 0 ? '#fff' : st.color;
+    if (e.type === 'beetle') {
+      ctx.beginPath(); ctx.ellipse(x + w / 2, y + h * .6, w / 2, h * .55, 0, Math.PI, 0); ctx.fill(); ctx.fillRect(x, y + h * .6, w, h * .25);
+      ctx.strokeStyle = '#2c342f'; ctx.lineWidth = 2 * dpr; ctx.beginPath(); ctx.moveTo(x + w / 2, y + h * .1); ctx.lineTo(x + w / 2, y + h * .85); ctx.stroke();
+      ctx.fillStyle = '#222'; for (let i = 0; i < 3; i++) ctx.fillRect(x + w * (.15 + i * .3), y + h * .85, 3 * dpr, h * .15);
+      ctx.fillStyle = '#e0503a'; ctx.fillRect(e.dir < 0 ? x + 2 * dpr : x + w - 5 * dpr, y + h * .55, 3 * dpr, 3 * dpr);
+    } else {
+      ctx.beginPath(); ctx.ellipse(x + w / 2, y + h * .55, w / 2, h * .45, 0, 0, 7); ctx.fill();
+      ctx.fillStyle = '#222'; ctx.fillRect(e.dir < 0 ? x + 3 * dpr : x + w - 5 * dpr, y + h * .35, 2 * dpr, 2 * dpr);
+    }
+  }
+
+  // 暗さ（地下ほど暗く、自分とランプのまわりは明るい）
+  const p = player, depth = Math.floor(p.y / T) - SURF;
+  if (!dbg.light && depth > 2) {
+    const a = Math.min(.9, (depth - 2) / 14 + .5);
+    const dc = darkCanvas(cw, ch); dc.clearRect(0, 0, cw, ch);
+    dc.globalCompositeOperation = 'source-over'; dc.fillStyle = `rgba(0,0,0,${a})`; dc.fillRect(0, 0, cw, ch);
+    dc.globalCompositeOperation = 'destination-out';
+    const hole = (cx, cy, r0, r1) => { const rg = dc.createRadialGradient(cx, cy, r0, cx, cy, r1); rg.addColorStop(0, 'rgba(0,0,0,1)'); rg.addColorStop(1, 'rgba(0,0,0,0)'); dc.fillStyle = rg; dc.fillRect(cx - r1, cy - r1, r1 * 2, r1 * 2); };
+    hole((p.x - cam.x) * s, (p.y - PLAYER.h / 2 - cam.y) * s, T * s * 2.5, T * s * 8);
+    for (const e of ents) if (e.kind === 'lamp') hole(((e.x + .5) * T - cam.x) * s, ((e.y + .5) * T - cam.y) * s, T * s * 1.5, T * s * 7);
+    ctx.drawImage(darkC, 0, 0);
+  }
+
+  // ねらっているブロック
+  if (pointer) {
+    const [tx, ty] = screenToTile(pointer.sx, pointer.sy);
+    ctx.strokeStyle = inReach(tx, ty) ? '#fff' : 'rgba(255,90,90,.8)'; ctx.lineWidth = Math.max(1.5, s); ctx.strokeRect(toSx(tx) + 1, toSy(ty) + 1, sz - 3, sz - 3);
+    if (mining && mining.need > 0) { ctx.fillStyle = 'rgba(0,0,0,.45)'; const f = Math.min(1, mining.t / mining.need); ctx.fillRect(toSx(mining.x), toSy(mining.y) + sz * (1 - f), sz, sz * f); }
+  }
+
+  // 自分（2×3）
+  const px = (p.x - PLAYER.w / 2 - cam.x) * s, py = (p.y - PLAYER.h - cam.y) * s, pw = PLAYER.w * s, ph = PLAYER.h * s;
+  if (!(p.inv > 0 && Math.floor(p.inv * 12) % 2)) {
+    ctx.fillStyle = '#2f3a56'; ctx.fillRect(px + pw * .1, py + ph * .36, pw * .8, ph * .64);
+    ctx.fillStyle = '#f0c8a0'; ctx.fillRect(px + pw * .18, py + ph * .04, pw * .64, ph * .32);
+    ctx.fillStyle = '#e0a020'; ctx.fillRect(px + pw * .08, py, pw * .84, ph * .1);
+    ctx.fillStyle = '#fff6b0'; ctx.fillRect(px + (p.face > 0 ? pw * .78 : pw * .08), py + ph * .01, pw * .14, ph * .06);
+    ctx.fillStyle = '#111'; ctx.fillRect(px + (p.face > 0 ? pw * .6 : pw * .3), py + ph * .14, 2.5 * s, 2.5 * s);
+  }
+  // 剣
+  const sw = swords[held];
+  ctx.save(); ctx.translate((p.x + p.face * PLAYER.w * .35 - cam.x) * s, (p.y - PLAYER.h * .5 - cam.y) * s);
+  const ang = swing > 0 ? (-1.6 + (1 - swing / .18) * 2.6) : -.5;
+  ctx.scale(p.face, 1); ctx.rotate(ang);
+  ctx.fillStyle = '#5a3a20'; ctx.fillRect(-2 * s, -2 * s, 4 * s, 6 * s);
+  ctx.fillStyle = sw.color; ctx.fillRect(-1.5 * s, -24 * s, 3.5 * s, 22 * s);
+  ctx.restore();
+  if (swing > 0) { ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 3 * s; ctx.beginPath(); ctx.arc((p.x - cam.x) * s, (p.y - PLAYER.h * .5 - cam.y) * s, 40 * s, p.face > 0 ? -1.2 : Math.PI - .9, p.face > 0 ? .9 : Math.PI + 1.2); ctx.stroke(); }
+  for (const k of sparks) { ctx.fillStyle = k.color; ctx.fillRect((k.x - cam.x) * s, (k.y - cam.y) * s, 2.5 * s, 2.5 * s); }
+}
+let darkC = null, darkX = null;
+function darkCanvas(w, h) { if (!darkC || darkC.width !== w || darkC.height !== h) { darkC = document.createElement('canvas'); darkC.width = w; darkC.height = h; darkX = darkC.getContext('2d'); } return darkX; }
+
+function hud() {
+  const p = player, pl = placeAt(p.x), depth = Math.floor((p.y - 1) / T) - SURF + 1;
+  const name = pl.name;
+  if (name !== lastPlace) {
+    if (lastPlace) toast(`― ${name} ―`);
+    lastPlace = name;
+    record('place-' + name, `${name}に入った`);
+  }
+  $('where').textContent = `${name}　${depth > 0 ? `地下 ${depth}` : '地上'}　/ 工房の箱：銅${bars.cu}・錫${bars.sn}本`;
+  $('hp').style.width = Math.max(0, p.hp) + '%';
+  const nt = nearThing();
+  const ub = $('useBtn');
+  if (nt && !paused) { ub.hidden = false; ub.textContent = `✋ ${nt.label}${matchMedia('(pointer: fine)').matches ? '（E）' : ''}`; } else ub.hidden = true;
+}
+
+/* ================= ループ ================= */
+function teleport(tx, ty) { player.x = (tx + .5) * T; player.y = (ty + 1) * T; player.vx = player.vy = 0; cam.x = player.x - viewW() / 2; cam.y = player.y - viewH() * .55; }
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (!paused) {
+    playTime += dt;
+    const n = Math.ceil(dt / (1 / 120)); for (let i = 0; i < n; i++) step(dt / n);
+    for (const e of ents) if (e.kind === 'enemy') enemyStep(e, dt);
+    if (input.attack || attackQueued) attack();
+    swing = Math.max(0, swing - dt); swingCd = Math.max(0, swingCd - dt);
+    for (let i = sparks.length - 1; i >= 0; i--) { const k = sparks[i]; k.t -= dt; k.x += k.vx * dt; k.y += k.vy * dt; k.vy += 600 * dt; if (k.t <= 0) sparks.splice(i, 1); }
+    useTool(dt);
+  }
+  const tx = player.x - viewW() / 2, ty = player.y - PLAYER.h / 2 - viewH() * .5;
+  cam.x += (tx - cam.x) * Math.min(1, dt * 8); cam.y += (ty - cam.y) * Math.min(1, dt * 8);
+  cam.x = Math.max(0, Math.min(W * T - viewW(), cam.x)); cam.y = Math.max(0, Math.min(H * T - viewH(), cam.y));
+  render(); hud();
+  requestAnimationFrame(frame);
+}
+
+/* ================= 操作 ================= */
+const KEYS = {ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', Space: 'jump', KeyJ: 'attack', KeyK: 'attack'};
+addEventListener('keydown', e => {
+  if (e.code === 'Escape') { for (const k of ['noteSheet', 'logSheet', 'crucible', 'help']) if (!$(k).hidden) hideSheet(k); return; }
+  if (paused) return;
+  if (KEYS[e.code]) { input[KEYS[e.code]] = true; e.preventDefault(); if (KEYS[e.code] === 'attack') attackQueued = true; }
+  if (e.code === 'KeyE') useThing();
+  if (e.code === 'KeyL') openLog(false);
+  if (e.code === 'Backquote' || e.code === 'F3') { toggleDebug(); e.preventDefault(); }
+});
+addEventListener('keyup', e => { if (KEYS[e.code]) input[KEYS[e.code]] = false; });
+addEventListener('blur', () => { for (const k in input) input[k] = false; pointer = null; });
+
+canvas.addEventListener('pointerdown', e => {
+  e.preventDefault(); if (paused) return;
+  if (e.button === 2) { input.attack = true; attackQueued = true; return; }
+  canvas.setPointerCapture(e.pointerId);
+  pointer = {sx: e.clientX, sy: e.clientY, id: e.pointerId, fresh: true};
+});
+canvas.addEventListener('pointermove', e => { if (pointer && pointer.id === e.pointerId) { pointer.sx = e.clientX; pointer.sy = e.clientY; } });
+const endPointer = e => { if (e.button === 2) input.attack = false; if (pointer && pointer.id === e.pointerId) { pointer = null; mining = null; } };
+canvas.addEventListener('pointerup', endPointer); canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+for (const el of document.querySelectorAll('[data-key]')) {
+  const k = el.dataset.key;
+  el.addEventListener('pointerdown', e => { e.preventDefault(); el.setPointerCapture(e.pointerId); input[k] = true; if (k === 'attack') attackQueued = true; el.classList.add('down'); });
+  const off = () => { input[k] = false; el.classList.remove('down'); };
+  el.addEventListener('pointerup', off); el.addEventListener('pointercancel', off); el.addEventListener('lostpointercapture', off);
+}
+$('useBtn').addEventListener('click', useThing);
+$('helpOk').addEventListener('click', () => hideSheet('help'));
+$('noteOk').addEventListener('click', () => hideSheet('noteSheet'));
+$('logBtn').addEventListener('click', () => openLog(false));
+$('logOk').addEventListener('click', () => hideSheet('logSheet'));
+$('logRestart').addEventListener('click', () => location.reload());
+$('logCopy').addEventListener('click', async () => {
+  const text = '青銅の剣の場面（試作）の記録\n' + logText();
+  try { await navigator.clipboard.writeText(text); $('logCopy').textContent = 'コピーした'; }
+  catch { const r = document.createRange(); r.selectNodeContents($('logText')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); $('logCopy').textContent = '選択したのでコピーしてください'; }
+  setTimeout(() => $('logCopy').textContent = '記録をコピー', 2000);
+});
+$('cruClose').addEventListener('click', () => hideSheet('crucible'));
+$('snMinus').addEventListener('click', () => { cru.sn = Math.max(10, cru.sn - 10); renderCrucible(); });
+$('snPlus').addEventListener('click', () => { cru.sn = Math.min(50, cru.sn + 10); renderCrucible(); });
+$('qMinus').addEventListener('click', () => { cru.q--; renderCrucible(); });
+$('qPlus').addEventListener('click', () => { cru.q++; renderCrucible(); });
+$('nMinus').addEventListener('click', () => { cru.n--; renderCrucible(); });
+$('nPlus').addEventListener('click', () => { cru.n++; renderCrucible(); });
+$('makeBtn').addEventListener('click', make);
+
+/* ---------- デバッグ ---------- */
+function toggleDebug() { dbg.on = !dbg.on; document.body.classList.toggle('debug', dbg.on); if (!dbg.on) setDbg('fly', false); }
+function setDbg(k, v) { dbg[k] = v; const el = document.querySelector(`[data-dbg="${k}"]`); if (el) el.classList.toggle('on', v); }
+for (const el of document.querySelectorAll('[data-dbg]')) el.addEventListener('click', () => setDbg(el.dataset.dbg, !dbg[el.dataset.dbg]));
+$('dbgBtn').addEventListener('click', toggleDebug);
+$('giveTin').addEventListener('click', () => { ores.set(B.CASSITERITE, (ores.get(B.CASSITERITE) || 0) + 3); updateHotbar(); toast('錫石を3個足した'); record('dbgTin', '（デバッグで錫石を足した）', true); });
+$('toTown').addEventListener('click', () => teleport(...spawn));
+$('toBeetle').addEventListener('click', () => teleport(...MARK.beetle));
+$('toRiver').addEventListener('click', () => teleport(...MARK.river));
+
+/* ---------- 開始 ---------- */
+player = {x: 0, y: 0, vx: 0, vy: 0, ground: false, hp: 100, face: 1, inv: 0, kb: 0};
+addEventListener('resize', resize);
+document.addEventListener('gesturestart', e => e.preventDefault());
+addEventListener('touchstart', () => document.body.classList.add('touch'), {once: true, passive: true});
+if (params.get('touch') === '1') document.body.classList.add('touch');
+resize(); teleport(...spawn); updateHotbar();
+record('start', '遊びはじめた（銅の剣を持って町から）');
+if (params.get('help') === '0') $('help').hidden = true;
+paused = !$('help').hidden;
+if (params.get('debug') === '1') toggleDebug();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
