@@ -417,7 +417,7 @@ function step(dt) {
     if ((input.jump || input.up) && p.ground) { p.vy = -PHYS.jump; p.ground = false; }
   }
   let nx = p.x + p.vx * dt;
-  if (blockedByBeetle(nx, p.y) && !blockedByBeetle(p.x, p.y)) { nx = p.x; p.vx = 0; }
+  if (blockedByBeetle(p.x, nx, p.y)) { nx = p.x; p.vx = 0; }
   else if (bodyHits(nx, p.y)) {
     if ((p.ground || inWater) && !bodyHits(nx, p.y - T) && !bodyHits(p.x, p.y - T)) p.y = Math.floor((p.y - T) / T + .5) * T;
     else { nx = p.x; p.vx = 0; }
@@ -455,7 +455,11 @@ function enemyStep(e, dt) {
   const ahead = nx + e.dir * s.w / 2;
   const noFloor = !isSolid(tileAt(Math.floor(ahead / T), Math.floor((e.py + 2) / T)));
   const outRange = e.min !== undefined && (nx / T < e.min || nx / T > e.max + 1);
-  if (bodyHits(nx, e.py, s.w, s.h) || (e.stun <= 0 && (noFloor || outRange))) { nx = e.px; e.dir *= -1; e.vx = 0; }
+  // 岩殻虫は自分から主人公の体に入り込まない（入り込むと、すり抜けの元になる）
+  const intoPlayer = e.type === 'beetle' && !dbg.fly && player.y - PLAYER.h < e.py && player.y > e.py - s.h &&
+    Math.abs(nx - player.x) < (PLAYER.w + s.w) / 2 && Math.abs(nx - player.x) < Math.abs(e.px - player.x);
+  if (intoPlayer) { nx = e.px; e.vx = 0; }
+  else if (bodyHits(nx, e.py, s.w, s.h) || (e.stun <= 0 && (noFloor || outRange))) { nx = e.px; e.dir *= -1; e.vx = 0; }
   e.px = nx;
   let ny = e.py + e.vy * dt;
   if (bodyHits(e.px, ny, s.w, s.h)) { if (e.vy > 0) ny = Math.floor(ny / T) * T; else ny = e.py; e.vy = 0; }
@@ -470,11 +474,13 @@ function enemyStep(e, dt) {
   }
 }
 // 岩殻虫は通せんぼする（すり抜けて奥へ行けないように）
-function blockedByBeetle(px, py) {
+// 重なっているときも、岩殻虫の中心に近づく向きには動けない（離れる向きだけ動ける）
+function blockedByBeetle(fromX, toX, py) {
   for (const e of ents) {
     if (e.kind !== 'enemy' || e.type !== 'beetle' || !e.alive) continue;
     const s = ENEMY[e.type];
-    if (Math.abs(px - e.px) < (PLAYER.w + s.w) / 2 - 2 && py - PLAYER.h < e.py && py > e.py - s.h) return true;
+    if (!(py - PLAYER.h < e.py && py > e.py - s.h)) continue;
+    if (Math.abs(toX - e.px) < (PLAYER.w + s.w) / 2 - 2 && Math.abs(toX - e.px) <= Math.abs(fromX - e.px)) return true;
   }
   return false;
 }
