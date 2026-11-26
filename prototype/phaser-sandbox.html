@@ -1,0 +1,1402 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1b2633">
+<title>歩いて掘る試作・Phaser版（使い捨て）</title>
+<!-- 使い捨ての試作。本番のベースにはしない（docs/decisions.md 2026-11-19「試作は使い捨てにする」）
+     prototype/play-sandbox.html（PR #28、worldgen-sandbox ブランチ）を Phaser 4 に移したもの。
+     生成コードは worldgen-sandbox.html からそのまま写している。描画・カメラ・画面の大きさは Phaser が受け持つ。
+     変えたところ：段差の自動上りなし、主人公は幅1.5ブロック、掘る速さは design.md の案（PR #47）、体の大きさとまとめて掘るの切り替えはなし。
+     外部ライブラリ：Phaser 4.2.1（MIT、THIRD_PARTY.md） -->
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: #eee;
+    font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+  #game { position: fixed; inset: 0; }
+  #game canvas { display: block; image-rendering: pixelated; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+
+  #top { position: fixed; top: calc(env(safe-area-inset-top) + 6px); left: calc(env(safe-area-inset-left) + 8px);
+    right: calc(env(safe-area-inset-right) + 8px); display: flex; gap: 8px; align-items: flex-start; pointer-events: none; }
+  #status { flex: 1; min-width: 0; }
+  #where { font-size: 13px; text-shadow: 0 1px 2px #000, 0 0 4px #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #hpBox { width: 120px; height: 6px; background: rgba(0,0,0,.5); border-radius: 3px; margin-top: 4px; overflow: hidden; }
+  #hp { height: 100%; width: 100%; background: #e05050; transition: width .2s; }
+  #hotbar { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; pointer-events: auto; max-width: 70vw; }
+  .slot { position: relative; width: 34px; height: 34px; padding: 0; border: 2px solid rgba(255,255,255,.25); border-radius: 6px; background: rgba(0,0,0,.45); }
+  .slot.sel { border-color: #ffd34a; }
+  .slot i { position: absolute; inset: 6px; border-radius: 3px; }
+  .slot b { position: absolute; right: 2px; bottom: 0; font-size: 10px; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  #invCount { font-size: 11px; opacity: .7; margin-top: 2px; text-shadow: 0 1px 2px #000; }
+  #dbgBtn { pointer-events: auto; width: 38px; height: 38px; border-radius: 10px; border: 1px solid rgba(255,255,255,.3); background: rgba(0,0,0,.45); font-size: 18px; }
+  body.debug #dbgBtn { background: #6a3fa0; }
+
+  #toast { position: fixed; top: calc(env(safe-area-inset-top) + 74px); left: 50%; transform: translate(-50%, -6px); opacity: 0;
+    background: rgba(0,0,0,.65); padding: 6px 14px; border-radius: 16px; font-size: 14px; transition: .25s; pointer-events: none; white-space: nowrap; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  /* スマホの操作ボタン */
+  #controls { position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 14px); display: none; justify-content: space-between;
+    padding: 0 calc(env(safe-area-inset-right) + 14px) 0 calc(env(safe-area-inset-left) + 14px); pointer-events: none; }
+  @media (pointer: coarse) { #controls { display: flex; } }
+  body.touch #controls { display: flex; }
+  .cluster { display: flex; gap: 6px; align-items: flex-end; pointer-events: auto; }
+  .pad { width: 64px; height: 64px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); background: rgba(0,0,0,.35);
+    font-size: 24px; display: grid; place-items: center; touch-action: none; }
+  .pad.small { width: 46px; height: 46px; font-size: 17px; }
+  @media (max-width: 420px) { .pad { width: 58px; height: 58px; } .pad.small { width: 42px; height: 42px; } #controls { padding-left: 8px; padding-right: 8px; } }
+  .pad.down { background: rgba(255,255,255,.3); }
+  #modeBtn.place { background: rgba(60,120,200,.6); }
+  #upBtn { display: none; }
+  body.fly #upBtn { display: grid; }
+
+  /* デバッグ */
+  #dbgPanel { display: none; position: fixed; top: calc(env(safe-area-inset-top) + 50px); right: calc(env(safe-area-inset-right) + 8px);
+    width: 178px; max-height: calc(100% - 210px); overflow-y: auto; background: rgba(20,14,32,.88); border: 1px solid #6a3fa0; border-radius: 10px;
+    padding: 8px; font-size: 12px; touch-action: pan-y; }
+  body.debug.panel #dbgPanel { display: block; }
+  body.debug:not(.panel) #dbgBtn { background: #3a2a5a; }
+  #dbgPanel h3 { margin: 4px 0 6px; font-size: 12px; color: #c9a8ff; }
+  #dbgPanel .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  #dbgPanel button { padding: 6px 2px; border-radius: 6px; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.06); font-size: 12px; }
+  #dbgPanel button.on { background: #6a3fa0; border-color: #c9a8ff; }
+  #dbgPanel input, #dbgPanel select { width: 100%; margin: 3px 0; padding: 5px; font-size: 13px; background: #111; color: #eee; border: 1px solid #555; border-radius: 6px; user-select: text; -webkit-user-select: text; }
+  #dbgText { display: none; position: fixed; left: calc(env(safe-area-inset-left) + 8px); bottom: calc(env(safe-area-inset-bottom) + 100px); margin: 0;
+    font: 11px/1.45 ui-monospace, Menlo, monospace; background: rgba(0,0,0,.55); padding: 6px 8px; border-radius: 6px; pointer-events: none; white-space: pre; max-width: calc(100% - 200px); overflow: hidden; }
+  body.debug #dbgText { display: block; }
+  body.mapopen #dbgPanel, body.mapopen #dbgText, body.mapopen #hotbar, body.mapopen #invCount { display: none !important; }
+  @media (pointer: fine) { #dbgText { bottom: 10px; } }
+  #mapCv { position: fixed; display: none; image-rendering: pixelated; border: 4px solid rgba(0,0,0,.6); background: #000; z-index: 5; }
+  body.mapopen #mapCv { display: block; }
+  #mapNote { position: fixed; display: none; font-size: 12px; text-shadow: 0 1px 2px #000; z-index: 5; pointer-events: none; }
+  body.mapopen #mapNote { display: block; }
+
+  #help, #loading { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.6); z-index: 10; }
+  #help > div { max-width: 340px; margin: 16px; background: #1b2633; border-radius: 12px; padding: 16px 18px; font-size: 14px; line-height: 1.7; }
+  #help h2 { margin: 0 0 8px; font-size: 16px; }
+  #help ul { margin: 0; padding-left: 1.2em; }
+  #help button { margin-top: 12px; width: 100%; padding: 10px; border-radius: 8px; border: 0; background: #e0a020; color: #111; font-weight: bold; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div id="game"></div>
+<canvas id="mapCv"></canvas><div id="mapNote">地図をタップするとそこへ移動（外をタップで閉じる）</div>
+
+<div id="top">
+  <div id="status">
+    <div id="where">…</div>
+    <div id="hpBox"><div id="hp"></div></div>
+    <div id="hotbar"></div>
+    <div id="invCount"></div>
+  </div>
+  <button id="dbgBtn" title="デバッグ（` キー）">🐞</button>
+</div>
+<div id="toast"></div>
+
+<div id="controls">
+  <div class="cluster">
+    <button class="pad" data-key="left">◀</button>
+    <button class="pad small" data-key="down">▼</button>
+    <button class="pad" data-key="right">▶</button>
+  </div>
+  <div class="cluster">
+    <button class="pad small" id="modeBtn" title="掘る／置く（E）">⛏</button>
+    <button class="pad small" id="upBtn" data-key="up">▲</button>
+    <button class="pad" data-key="jump">⤒</button>
+  </div>
+</div>
+
+<div id="dbgPanel">
+  <h3>ツルハシの硬さ</h3>
+  <div class="grid" style="grid-template-columns: repeat(3, 1fr)">
+    <button data-pick="5">初期 5</button><button data-pick="8">銅 8</button><button data-pick="12">青銅 12</button>
+    <button data-pick="20">鉄 20</button><button data-pick="40">鋼 40</button><button data-pick="72">焼入 72</button>
+  </div>
+  <h3>動き・掘る</h3>
+  <div class="grid">
+    <button data-dbg="fly">飛ぶ</button>
+    <button data-dbg="instant">すぐ掘れる</button>
+    <button data-dbg="reach">どこでも届く</button>
+    <button id="toTown">町へ</button>
+  </div>
+  <h3>表示</h3>
+  <div class="grid">
+    <button data-dbg="light">明るく</button>
+    <button data-dbg="xray">鉱石を透視</button>
+    <button data-dbg="grid">マス目</button>
+    <button data-dbg="map">地図</button>
+    <button id="zoomOut">ひく</button>
+    <button id="zoomIn">寄る</button>
+  </div>
+  <h3>持ち物</h3>
+  <div class="grid"><button id="giveOres" style="grid-column: span 2">鉱石を10個ずつ</button></div>
+  <h3>ワールド</h3>
+  <input id="seed" value="komorebi" autocomplete="off">
+  <select id="size">
+    <option value="play">遊ぶ用（800×360）</option>
+    <option value="small">小（1600×600）</option>
+    <option value="mid">中（4000×1200）</option>
+  </select>
+  <div class="grid">
+    <button id="regen">作り直す</button>
+    <button id="randSeed">ランダム</button>
+  </div>
+</div>
+<pre id="dbgText"></pre>
+
+<div id="help">
+  <div>
+    <h2>歩いて掘る試作（Phaser版）</h2>
+    <ul>
+      <li><b>スマホ</b>：◀ ▶ で移動、⤒ でジャンプ（はしごや水の中では上る）、▼ で下りる</li>
+      <li>ブロックを<b>長押し</b>で掘る。1振り0.3秒で、硬いほど振る回数が増える。ツルハシより硬い岩は掘れない</li>
+      <li>⛏ を押すと 🧱（置く）に切り替わる。置くブロックは上の持ち物から選ぶ</li>
+      <li><b>PC</b>：A D / ← → で移動、W・Space でジャンプ、S で下、マウス長押しで掘る、右クリックで置く、E で切り替え、` でデバッグ</li>
+      <li>段差はジャンプで上る（4ブロックまで）</li>
+      <li>🐞 でデバッグ（ツルハシの硬さ・飛ぶ・地図で移動・鉱石の透視など）。もう一度押すとパネルだけ隠れる</li>
+    </ul>
+    <button id="helpOk">はじめる</button>
+  </div>
+</div>
+<div id="loading" hidden><div>ワールドを作っています…</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/phaser@4.2.1/dist/phaser.min.js"></script>
+<script>
+'use strict';
+
+/* ---------------- 乱数とノイズ ---------------- */
+function hashString(s) {
+  let h = 1779033703 ^ s.length;
+  for (let i = 0; i < s.length; i++) { h = Math.imul(h ^ s.charCodeAt(i), 3432918353); h = h << 13 | h >>> 19; }
+  h = Math.imul(h ^ h >>> 16, 2246822507); h = Math.imul(h ^ h >>> 13, 3266489909);
+  return (h ^ h >>> 16) >>> 0;
+}
+class Rng {
+  constructor(seed) { this.a = (typeof seed === 'number' ? seed : hashString(String(seed))) >>> 0; }
+  f() { let t = this.a = this.a + 0x6D2B79F5 | 0; t = Math.imul(t ^ t >>> 15, 1 | t); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }
+  range(a, b) { return a + (b - a) * this.f(); }
+  int(a, b) { return Math.floor(this.range(a, b + 1)); }
+  pick(arr) { return arr[Math.floor(this.f() * arr.length)]; }
+  chance(p) { return this.f() < p; }
+  shuffle(arr) { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(this.f() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; }
+}
+function makeNoise1D(rng, scale, octaves = 4) {
+  const N = 2048, layers = [];
+  for (let o = 0; o < octaves; o++) { const t = new Float32Array(N); for (let i = 0; i < N; i++) t[i] = rng.f() * 2 - 1; layers.push(t); }
+  return x => {
+    let v = 0, amp = 1, sum = 0, s = scale;
+    for (let o = 0; o < octaves; o++) {
+      const p = x / s, i = Math.floor(p), t = p - i, k = t * t * (3 - 2 * t), tab = layers[o];
+      const a = tab[((i % N) + N) % N], b = tab[(((i + 1) % N) + N) % N];
+      v += (a + (b - a) * k) * amp; sum += amp; amp *= .5; s /= 2;
+    }
+    return v / sum;
+  };
+}
+function cellHash(seed, x, y) {
+  let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + seed) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function valueNoise2D(seed, x, y, scale) {
+  const px = x / scale, py = y / scale, ix = Math.floor(px), iy = Math.floor(py), fx = px - ix, fy = py - iy;
+  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+  const a = cellHash(seed, ix, iy), b = cellHash(seed, ix + 1, iy), c = cellHash(seed, ix, iy + 1), d = cellHash(seed, ix + 1, iy + 1);
+  return (a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy;
+}
+
+/* ---------------- ブロック定義 ---------------- */
+const BLOCKS = [], B = {};
+function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+function def(key, name, color, opt = {}) {
+  const id = BLOCKS.length;
+  BLOCKS.push({id, key, name, color, rgb: hexRgb(color), solid: true, cat: 'rock', stab: 0, ...opt});
+  B[key] = id; return id;
+}
+def('AIR', '空気', '#000000', {solid: false, cat: 'air'});
+// 地表の素材
+def('GRASS', '草地', '#5f8a3e', {cat: 'surface', stab: .2});
+def('DIRT', '土', '#7a5a3f', {cat: 'surface', stab: .3});
+def('SAND', '砂', '#d8c38a', {cat: 'surface', stab: .45});
+def('SNOW', '雪', '#e8eef2', {cat: 'surface', stab: .3});
+def('ASH', '灰', '#8f8f8f', {cat: 'surface', stab: .45});
+def('MUD', '泥', '#5a4e3a', {cat: 'surface', stab: .35});
+def('METALSOIL', '金気のある土', '#8fa3a8', {cat: 'surface', stab: .2});
+def('GLOWMOSS', '光る苔', '#6fd8bf', {cat: 'surface', stab: .2});
+// 岩
+def('GRAVEL', '砂利', '#8d8478', {stab: .4});
+def('SHALLOW', '浅い岩', '#77695c', {stab: .3});
+def('LIMESTONE', '石灰岩', '#c9c1a6', {stab: .15});
+def('BASALT', '玄武岩', '#3c3638', {stab: .1});
+def('SEDROCK', '堆積岩', '#8a6e5a', {stab: .25});
+def('SHALE', '頁岩', '#6d6268', {stab: .5});
+def('VEINROCK', '熱水の母岩', '#646a74', {stab: .2});
+def('PEGMATITE', 'ペグマタイト', '#9c9088', {stab: .3});
+def('GRANITE', '深成岩', '#545060', {stab: .05});
+def('ANOMROCK', '異層の岩', '#4b3f66', {stab: .45});
+def('ABYSSROCK', '最深部の岩', '#2c2338', {stab: .5});
+def('CRYSTAL', '巨大結晶', '#b9e6ef', {stab: .1});
+def('PETRIFIED', '石化した木', '#8c7b6a', {stab: .2});
+def('ICE', '氷', '#a9d8ef', {stab: .3});
+// 液体・植物・構造物
+def('WATER', '水', '#3b6fb5', {solid: false, cat: 'liquid'});
+def('LAVA', '溶岩', '#e2572a', {solid: false, cat: 'liquid'});
+def('REVWATER', '逆さ滝', '#5fa0e8', {solid: false, cat: 'liquid'});
+def('TRUNK', '幹', '#6b4a2e', {solid: false, cat: 'plant'});
+def('LEAVES', '葉', '#3f7a3a', {solid: false, cat: 'plant'});
+def('METALLEAF', '金属質の葉', '#b8c6cc', {solid: false, cat: 'plant'});
+def('TOWN', '町の建物', '#c9a46b', {cat: 'struct'});
+def('LADDER', 'はしご（竪坑）', '#b08850', {solid: false, cat: 'struct'});
+def('TIMBER', '坑木', '#7b5a33', {cat: 'struct', stab: .1});
+def('RUBBLE', '瓦礫（崩落跡）', '#77706a', {cat: 'struct', stab: .8});
+def('MILL', '水車小屋', '#a7834f', {cat: 'struct'});
+def('FORGE', '古い鍛冶場の跡', '#8a4f3a', {cat: 'struct'});
+// 鉱石
+const ORE = (key, name, color, group) => def(key, name, color, {cat: 'ore', group, stab: .2});
+ORE('NATIVECU', '自然銅', '#e0874a', '銅');
+ORE('MALACHITE', '孔雀石', '#2fae6a', '銅');
+ORE('CHALCOPYRITE', '黄銅鉱', '#d8c040', '銅');
+ORE('HEMATITE', '赤鉄鉱', '#b0443a', '鉄');
+ORE('MAGNETITE', '磁鉄鉱', '#4d5f78', '鉄');
+ORE('LIMONITE', '褐鉄鉱', '#b5793a', '鉄');
+ORE('SIDERITE', '菱鉄鉱', '#c09868', '鉄');
+ORE('PYRITE', '黄鉄鉱', '#f3e48c', '鉄');
+ORE('BLACKSAND', '黒い砂鉄', '#2a2a2a', '鉄');
+ORE('CASSITERITE', '錫石', '#cdb59a', '錫');
+ORE('GALENA', '方鉛鉱', '#9aa6b5', '鉛');
+ORE('SPHALERITE', '閃亜鉛鉱', '#7a4f2a', '亜鉛');
+ORE('GOLD', '砂金', '#ffd34a', '金');
+ORE('COAL', '石炭', '#1e1e1e', '燃料');
+ORE('FLUORITE', '蛍石', '#a77be0', 'その他');
+ORE('SCHEELITE', '灰重石', '#f2e2b0', 'その他');
+ORE('CHROMITE', 'クロム鉄鉱', '#4f7a63', 'その他');
+ORE('SALTPETER', '硝石', '#f4f4ea', 'その他');
+ORE('SULFUR', '硫黄', '#f5e030', 'その他');
+ORE('ROCKSALT', '岩塩', '#f0d0d0', 'その他');
+ORE('BAUXITE', 'ボーキサイト', '#c86a3a', 'その他');
+ORE('QUARTZ', '水晶', '#eaf6ff', '宝石');
+ORE('TOURMALINE', 'トルマリン', '#e04f8f', '宝石');
+ORE('GEM', '宝石の原石', '#ff3f5f', '宝石');
+ORE('GLOWSTONE', '灯晶石', '#7fe8ff', 'オリジナル');
+ORE('FLOATORE', '浮遊鉱', '#c8b4ff', 'オリジナル');
+ORE('COLDORE', '冷鉱', '#9fc4ff', 'オリジナル');
+ORE('MANADRAIN', '吸魔鉱', '#7a2a8a', 'オリジナル');
+
+const NB = BLOCKS.length;
+const isSolid = new Uint8Array(NB), isOre = new Uint8Array(NB), isRock = new Uint8Array(NB), passable = new Uint8Array(NB), climbable = new Uint8Array(NB), protectedBlk = new Uint8Array(NB);
+for (const b of BLOCKS) {
+  isSolid[b.id] = b.solid ? 1 : 0;
+  isOre[b.id] = b.cat === 'ore' ? 1 : 0;
+  isRock[b.id] = (b.cat === 'rock' || b.cat === 'surface') ? 1 : 0;
+  passable[b.id] = (!b.solid && b.key !== 'LAVA') ? 1 : 0;
+  climbable[b.id] = (b.key === 'LADDER' || b.key === 'WATER' || b.key === 'REVWATER') ? 1 : 0;
+  protectedBlk[b.id] = (b.cat === 'struct' || b.cat === 'liquid') ? 1 : 0;
+}
+const STRATA = [
+  {name: '上空・地上', color: '#1b2633'},
+  {name: '1 表土・浅い岩窟', color: '#a08060'},
+  {name: '2 堆積岩の層', color: '#9a6a4a'},
+  {name: '3 熱水鉱脈', color: '#6a7a8a'},
+  {name: '4 晶洞・ペグマタイト', color: '#9a8aa0'},
+  {name: '5 深成岩・スカルン', color: '#4a5a6a'},
+  {name: '6 異層', color: '#5a3a8a'},
+  {name: '7 最深部', color: '#3a1a4a'},
+  {name: '浮島', color: '#7a9a6a'},
+];
+
+/* ---------------- 地域 ---------------- */
+// tier 0=町 1=現実寄り 2=現実を大げさに 3=完全に架空
+const REGIONS = [
+  {key: 'town', name: '鉱山町と草原', tier: 0, color: '#d8b46b', h: .01, amp: .004, top: 'GRASS', topDepth: 4},
+  {key: 'river', name: '川と河原', tier: 1, color: '#5aa0d8', h: -.005, amp: .01, top: 'GRASS', topDepth: 4, near: true},
+  {key: 'swamp', name: '沼地', tier: 1, color: '#6b7a4a', h: -.012, amp: .004, top: 'MUD', topDepth: 6, near: true},
+  {key: 'forest', name: '温帯の森', tier: 1, color: '#3f8a4a', h: .01, amp: .02, top: 'GRASS', topDepth: 5, near: true},
+  {key: 'coast', name: '海岸', tier: 1, color: '#6ad0d0', h: -.02, amp: .005, top: 'SAND', topDepth: 8},
+  {key: 'desert', name: '乾燥地', tier: 1, color: '#e0c070', h: 0, amp: .015, top: 'SAND', topDepth: 14},
+  {key: 'tropical', name: '熱帯', tier: 1, color: '#2fbf5f', h: .005, amp: .02, top: 'GRASS', topDepth: 6},
+  {key: 'volcano', name: '火山', tier: 1, color: '#d0503a', h: .02, amp: .015, top: 'ASH', topDepth: 4},
+  {key: 'snow', name: '雪山・寒冷地', tier: 1, color: '#e0f0ff', h: .06, amp: .05, top: 'SNOW', topDepth: 4},
+  {key: 'highland', name: '岩山・高原', tier: 1, color: '#9a8a7a', h: .045, amp: .03, top: 'DIRT', topDepth: 1},
+  {key: 'limestone', name: '石灰岩の台地', tier: 1, color: '#d8d0b0', h: .03, amp: .01, top: 'GRASS', topDepth: 2},
+  {key: 'saltlake', name: '塩湖', tier: 1, color: '#f0e0e0', h: -.01, amp: .002, top: 'SAND', topDepth: 4},
+  {key: 'geothermal', name: '地熱地帯・温泉', tier: 1, color: '#c08a6a', h: .005, amp: .01, top: 'DIRT', topDepth: 4},
+  {key: 'metalforest', name: '金属の森', tier: 2, color: '#a0b8c0', h: .01, amp: .015, top: 'METALSOIL', topDepth: 5},
+  {key: 'maghill', name: '磁気の丘', tier: 2, color: '#5a6a8a', h: .03, amp: .02, top: 'GRASS', topDepth: 3},
+  {key: 'dunes', name: '歌う砂丘', tier: 2, color: '#f0d890', h: .005, amp: .03, top: 'SAND', topDepth: 18},
+  {key: 'crystalwaste', name: '巨大結晶の荒野', tier: 2, color: '#a0e0f0', h: .01, amp: .01, top: 'DIRT', topDepth: 3},
+  {key: 'ashplain', name: '灰の平原', tier: 3, color: '#a0a0a0', h: 0, amp: .004, top: 'ASH', topDepth: 6},
+  {key: 'glowfog', name: '光る霧の湿原', tier: 3, color: '#6fe0c8', h: -.008, amp: .004, top: 'GLOWMOSS', topDepth: 4},
+  {key: 'revfalls', name: '逆さ滝の谷', tier: 3, color: '#7090f0', h: .02, amp: .02, top: 'GRASS', topDepth: 3},
+];
+const POCKETS = {
+  glowforest: {name: '光る結晶の森', color: '#7fe8ff'},
+  petrified: {name: '石化した森', color: '#c0a080'},
+  floatcave: {name: '浮遊鉱の空洞', color: '#c8b4ff'},
+  frozen: {name: '凍土の洞窟', color: '#a9d8ef'},
+  silent: {name: '静かな空洞', color: '#b060c0'},
+  resonance: {name: '共鳴晶洞', color: '#eaf6ff'},
+};
+const STRUCTS = {
+  mine: {name: '廃坑', color: '#c08040'},
+  mill: {name: '水車小屋', color: '#e0b060'},
+  batcave: {name: 'コウモリの巣の洞窟', color: '#f4f4ea'},
+  forge: {name: '古い鍛冶場の跡', color: '#ff7050'},
+  islands: {name: '浮島', color: '#9ad08a'},
+};
+
+/* ---------------- 生成 ---------------- */
+const SIZES = {play: [800, 360], small: [1600, 600], mid: [4000, 1200], full: [8000, 2400]};
+let world = null;
+
+function generate(seedStr, sizeKey) {
+  const T = {}, t0 = performance.now();
+  let tp = t0;
+  const lap = name => { const n = performance.now(); T[name] = n - tp; tp = n; };
+  const [W, H] = SIZES[sizeKey];
+  const N = W * H;
+  const rng = new Rng(seedStr);
+  const seedNum = hashString(String(seedStr));
+  const blocks = new Uint8Array(N);
+  const layer = new Uint8Array(N);
+  const surf = new Int32Array(W);
+  const regionOf = new Uint8Array(W);
+  const bounds = []; // bounds[k][x]: 地層kの上端（k=2..7）
+  const features = [];
+  const scale = W / 1600; // 密度は面積比で増やす
+  const idx = (x, y) => y * W + x;
+  const inb = (x, y) => x >= 0 && x < W && y >= 0 && y < H;
+
+  /* 1. 世界の形：地域の配置 */
+  const cx = W >> 1;
+  const townW = Math.max(70, Math.round(W * .035));
+  const river = REGIONS.find(r => r.key === 'river');
+  const ringOf = r => r.near ? 0 : r.tier; // 0=町のすぐ近く 1=現実寄り 2=大げさ 3=架空
+  const sideWidth = Math.floor((W - townW) / 2);
+  // 1区画の目安幅から、片側にいくつ地域を並べるかを決める。足りない分は同じ種類をくり返す
+  const segTarget = Math.max(60, Math.min(230, sideWidth / 10));
+  const slotsPerSide = Math.max(11, Math.round(sideWidth / segTarget));
+  const items = REGIONS.filter(r => r.tier > 0 && r !== river); // 川以外は最低1回ずつ
+  const UNIQUE = new Set(['volcano', 'revfalls']); // 世界に1つしか出ない地域
+  const repeatW = r => r.tier === 1 ? 1 : .8;
+  const pool = REGIONS.filter(r => r.tier > 0 && !UNIQUE.has(r.key));
+  const poolTotal = pool.reduce((a, r) => a + repeatW(r), 0);
+  while (items.length + 1 < slotsPerSide * 2) { let t = rng.f() * poolTotal; for (const r of pool) { t -= repeatW(r); if (t <= 0) { items.push(r); break; } } }
+  const left = [], right = [], riverSide = rng.chance(.5) ? left : right, otherSide = riverSide === left ? right : left;
+  riverSide.push(river);
+  for (let ring = 0; ring <= 3; ring++) {
+    const ringItems = rng.shuffle(items.filter(r => ringOf(r) === ring));
+    let turn = rng.chance(.5);
+    for (const r of ringItems) { (turn ? left : right).push(r); turn = !turn; }
+  }
+  // 同じ地域がとなり合わないように並べ替える
+  for (const list of [left, right]) for (let i = 1; i < list.length; i++) if (list[i] === list[i - 1]) {
+    const j = list.findIndex((r, k) => k > i && ringOf(r) === ringOf(list[i]) && r !== list[i] && r !== list[i - 1]);
+    if (j > 0) [list[i], list[j]] = [list[j], list[i]];
+  }
+  let spans = []; // {r, x0, x1}
+  spans.push({r: REGIONS[0], x0: cx - (townW >> 1), x1: cx - (townW >> 1) + townW});
+  const layoutSide = (list, dir) => {
+    const weights = list.map(() => rng.range(.7, 1.3)), total = weights.reduce((a, b) => a + b, 0);
+    let pos = dir < 0 ? cx - (townW >> 1) : cx - (townW >> 1) + townW;
+    list.forEach((r, i) => {
+      const w = Math.max(30, Math.round(sideWidth * weights[i] / total));
+      const x0 = dir < 0 ? Math.max(0, pos - w) : pos, x1 = dir < 0 ? pos : Math.min(W, pos + w);
+      spans.push({r, x0, x1}); pos = dir < 0 ? x0 : x1;
+    });
+    if (dir < 0) spans[spans.length - 1].x0 = 0; else spans[spans.length - 1].x1 = W;
+  };
+  layoutSide(left, -1); layoutSide(right, 1);
+  // 小さいバイオーム：大きい地域の中に、別の地域を小さく差し込む（遠いほど架空のルールは守る）
+  const PATCHES = [['swamp', 1], ['saltlake', 1], ['geothermal', 1], ['limestone', 1], ['forest', 1], ['crystalwaste', 2], ['glowfog', 3], ['ashplain', 3]];
+  const patchCount = Math.round(W / 220);
+  for (let k = 0; k < patchCount; k++) {
+    const [key, minTier] = rng.pick(PATCHES), pr = REGIONS.find(r => r.key === key), pw = rng.int(26, 50);
+    const hosts = spans.filter(h => h.r.tier >= minTier && h.r.tier > 0 && h.r !== pr && h.r !== river && !UNIQUE.has(h.r.key) && !h.patch && h.x1 - h.x0 >= pw + 40);
+    if (!hosts.length) continue;
+    const h = rng.pick(hosts), px0 = rng.int(h.x0 + 20, h.x1 - pw - 20);
+    spans = spans.filter(q => q !== h);
+    spans.push({r: h.r, x0: h.x0, x1: px0}, {r: pr, x0: px0, x1: px0 + pw, patch: true}, {r: h.r, x0: px0 + pw, x1: h.x1});
+  }
+  spans.sort((a, b) => a.x0 - b.x0);
+  for (const s of spans) for (let x = s.x0; x < s.x1; x++) regionOf[x] = REGIONS.indexOf(s.r);
+  const spanOf = key => spans.find(s => s.r.key === key);
+
+  /* 2. 地形：地表の高さ */
+  const skyH = Math.round(H * .10), surfaceBase = Math.round(H * .17);
+  const n1 = makeNoise1D(rng, 220 * Math.max(1, scale * .6), 4), n2 = makeNoise1D(rng, 40, 3);
+  const target = new Float32Array(W), ampArr = new Float32Array(W);
+  for (let x = 0; x < W; x++) { const r = REGIONS[regionOf[x]]; target[x] = r.h * H; ampArr[x] = r.amp * H; }
+  const smooth = (arr, rad) => { const out = new Float32Array(W); let acc = 0, cnt = 0; for (let x = -rad; x < W + rad; x++) { const a = x + rad, b = x - rad - 1; if (a < W && a >= 0) { acc += arr[a]; cnt++; } if (b >= 0 && b < W) { acc -= arr[b]; cnt--; } if (x >= 0 && x < W) out[x] = acc / cnt; } return out; };
+  const tS = smooth(target, 25), aS = smooth(ampArr, 25);
+  for (let x = 0; x < W; x++) surf[x] = Math.round(surfaceBase - tS[x] - (n1(x) * .7 + n2(x) * .3) * aS[x] * 2.2);
+  // 町は平らにする
+  const town = spanOf('town'); let tAvg = 0; for (let x = town.x0; x < town.x1; x++) tAvg += surf[x]; tAvg = Math.round(tAvg / (town.x1 - town.x0));
+  for (let x = town.x0; x < town.x1; x++) surf[x] = tAvg;
+  // 火山：円錐
+  for (const vol of spans.filter(q => q.r.key === 'volcano')) { const vc = (vol.x0 + vol.x1) >> 1, vw = (vol.x1 - vol.x0) * .45, vh = H * .09;
+    for (let x = vol.x0; x < vol.x1; x++) { const d = Math.abs(x - vc) / vw; if (d < 1) surf[x] -= Math.round(vh * (1 - d) * (d < .12 ? .7 : 1)); } }
+  // 逆さ滝の谷：深い谷
+  for (const rev of spans.filter(q => q.r.key === 'revfalls')) { const vc = (rev.x0 + rev.x1) >> 1, vw = (rev.x1 - rev.x0) * .3;
+    for (let x = rev.x0; x < rev.x1; x++) { const d = Math.abs(x - vc) / vw; if (d < 1) surf[x] += Math.round(H * .07 * Math.min(1, (1 - d) * 3)); } }
+  for (let x = 0; x < W; x++) surf[x] = Math.max(skyH + 20, Math.min(H * .4, surf[x]));
+  lap('地形');
+
+  /* 3. 地層 */
+  const fr = [0, .05, .17, .33, .47, .63, .85];
+  for (let k = 2; k <= 7; k++) {
+    const nb = makeNoise1D(rng, 140, 3), arr = new Int32Array(W);
+    for (let x = 0; x < W; x++) arr[x] = Math.round(surfaceBase + fr[k - 1] * (H - surfaceBase) + nb(x) * H * .018);
+    bounds[k] = arr;
+  }
+  for (let x = 0; x < W; x++) for (let k = 2; k <= 7; k++) if (bounds[k][x] <= surf[x] + 6) bounds[k][x] = surf[x] + 6 + k;
+  const shaleN = makeNoise1D(rng, 60, 2);
+  // 石灰岩・玄武岩の置き換えは、地域の端から離れるほど深くまで（縦にまっすぐな境目にしない）
+  const edgeDist = new Float32Array(W);
+  for (const sp of spans) for (let x = sp.x0; x < sp.x1; x++) edgeDist[x] = Math.min(x - sp.x0, sp.x1 - 1 - x);
+  for (let x = 0; x < W; x++) {
+    const r = REGIONS[regionOf[x]], top = B[r.top], sub = (r.top === 'GRASS') ? B.DIRT : top, s0 = surf[x];
+    const b2 = bounds[2][x], b3 = bounds[3][x], b4 = bounds[4][x], b5 = bounds[5][x], b6 = bounds[6][x], b7 = bounds[7][x];
+    const limeR = r.key === 'limestone', basaltR = r.key === 'volcano', shOff = shaleN(x) * 8, reach = Math.min(1, edgeDist[x] / 18);
+    for (let y = 0; y < H; y++) {
+      const i = y * W + x;
+      if (y < s0) { blocks[i] = 0; layer[i] = 0; continue; }
+      const d = y - s0;
+      let s = y < b2 ? 1 : y < b3 ? 2 : y < b4 ? 3 : y < b5 ? 4 : y < b6 ? 5 : y < b7 ? 6 : 7;
+      layer[i] = s;
+      let id;
+      if (d === 0) id = top;
+      else if (d < r.topDepth) id = sub;
+      else if (s <= 2 && (limeR || basaltR) && reach * (H * .16) + valueNoise2D(seedNum + 5, x, y, 9) * 14 > d) id = limeR ? B.LIMESTONE : B.BASALT;
+      else if (s === 1) id = valueNoise2D(seedNum, x, y, 14) > .68 ? B.GRAVEL : B.SHALLOW;
+      else if (s === 2) id = (((y + shOff) % 23) + 23) % 23 < 4 ? B.SHALE : B.SEDROCK;
+      else id = [0, 0, 0, B.VEINROCK, B.PEGMATITE, B.GRANITE, B.ANOMROCK, B.ABYSSROCK][s];
+      blocks[i] = id;
+    }
+  }
+  lap('地層');
+
+  /* 地域ごとの地形・素材 */
+  const set = (x, y, id) => { if (inb(x, y)) blocks[idx(x, y)] = id; };
+  const get = (x, y) => inb(x, y) ? blocks[idx(x, y)] : B.GRANITE;
+  const stampEllipse = (x0, y0, rx, ry, fn) => {
+    for (let y = Math.floor(y0 - ry); y <= y0 + ry; y++) for (let x = Math.floor(x0 - rx); x <= x0 + rx; x++) {
+      if (!inb(x, y)) continue; const dx = (x - x0) / rx, dy = (y - y0) / ry; const d = dx * dx + dy * dy; if (d <= 1) fn(x, y, d);
+    }
+  };
+  const fillWaterDown = (x0, x1, level) => { // 地表より下の空気を水位まで水で満たす（谷・窪地用）
+    for (let x = Math.max(0, x0); x < Math.min(W, x1); x++) for (let y = level; y < surf[x]; y++) if (blocks[idx(x, y)] === 0) blocks[idx(x, y)] = B.WATER;
+  };
+  const tree = (x, y, kind) => {
+    const h = kind === 'conifer' ? rng.int(6, 10) : rng.int(4, 8), leaf = kind === 'metal' ? B.METALLEAF : B.LEAVES;
+    for (let k = 1; k <= h; k++) set(x, y - k, B.TRUNK);
+    const rr = kind === 'conifer' ? 2 : 3;
+    stampEllipse(x, y - h, rr, kind === 'conifer' ? 4 : 2.5, (px, py) => { if (get(px, py) === 0) set(px, py, leaf); });
+  };
+  for (const s of spans) {
+    const r = s.r, w = s.x1 - s.x0, mid = (s.x0 + s.x1) >> 1;
+    if (r.key === 'river') {
+      const cw = Math.max(10, Math.round(w * .18)), depth = 6 + rng.int(0, 3);
+      const rc = mid + rng.int(-w * .15, w * .15);
+      for (let x = rc - cw; x <= rc + cw; x++) { if (x < 0 || x >= W) continue; const d = Math.abs(x - rc) / cw; const cut = Math.round(depth * (1 - d * d)); for (let k = 0; k < cut; k++) set(x, surf[x] + k, 0); surf[x] += cut; set(x, surf[x], B.SAND); set(x, surf[x] + 1, B.GRAVEL); }
+      const level = Math.min(surf[rc - cw], surf[rc + cw]) + 1;
+      fillWaterDown(rc - cw, rc + cw + 1, level);
+      // 砂鉱：川底に錫石と砂金
+      let placed = 0;
+      for (let x = rc - cw; x <= rc + cw; x++) for (let k = 0; k < 3; k++) { if (rng.chance(.22)) { set(x, surf[x] + k, rng.chance(.8) ? B.CASSITERITE : B.GOLD); placed++; } }
+      // 昔の川筋：河原の地下に埋もれた砂鉱の層
+      for (let k = 0; k < Math.max(2, w / 30); k++) { const px = rng.int(s.x0, s.x1 - 20), py = surf[px] + rng.int(5, 16), len = rng.int(10, 24);
+        for (let j = 0; j < len; j++) for (let t = 0; t < 2; t++) if (rng.chance(.35) && isRock[get(px + j, py + t)]) set(px + j, py + t, rng.chance(.85) ? B.CASSITERITE : B.GOLD); }
+      const millX = rc + (rng.chance(.5) ? -cw - 8 : cw + 3);
+      const my = surf[millX];
+      // 足場を平らにしてから建てる（斜面に建てると入口が段差でふさがる）
+      for (let x = millX - 1; x < millX + 7; x++) { if (x < 0 || x >= W) continue; for (let y = Math.min(surf[x], my); y < Math.max(surf[x], my); y++) set(x, y, y < my ? 0 : B.DIRT); set(x, my, B.GRASS); surf[x] = my; }
+      for (let y = my - 7; y < my; y++) for (let x = millX; x < millX + 6; x++) set(x, y, (y === my - 7 || ((x === millX || x === millX + 5) && y < my - 3)) ? B.MILL : 0);
+      features.push({kind: 'mill', x: millX + 3, y: my - 3, r: 5});
+    } else if (r.key === 'swamp') {
+      for (let k = 0; k < Math.max(2, w / 40); k++) { const px = rng.int(s.x0 + 5, s.x1 - 10), pw = rng.int(6, 14), pd = rng.int(2, 3);
+        for (let x = px; x < px + pw; x++) { for (let j = 0; j < pd; j++) set(x, surf[x] + j, 0); surf[x] += pd; }
+        fillWaterDown(px, px + pw, surf[px] - pd + 1); }
+      for (let x = s.x0; x < s.x1; x++) for (let k = 0; k < 4; k++) if (rng.chance(.12)) set(x, surf[x] + k, B.LIMONITE);
+      for (let x = s.x0 + 3; x < s.x1; x += rng.int(10, 22)) if (get(x, surf[x] - 1) === 0) tree(x, surf[x], 'broad');
+    } else if (r.key === 'forest' || r.key === 'town' || r.key === 'tropical' || r.key === 'snow' || r.key === 'metalforest') {
+      const kind = r.key === 'snow' ? 'conifer' : r.key === 'metalforest' ? 'metal' : 'broad';
+      const gap = r.key === 'town' ? 999 : r.key === 'forest' || r.key === 'tropical' || r.key === 'metalforest' ? [5, 10] : [10, 24];
+      if (gap !== 999) for (let x = s.x0 + 3; x < s.x1 - 3; x += rng.int(gap[0], gap[1])) if (get(x, surf[x] - 1) === 0) tree(x, surf[x], kind);
+      if (r.key === 'tropical') for (let k = 0; k < w / 25; k++) { const x = rng.int(s.x0, s.x1 - 1); stampEllipse(x, surf[x] + rng.int(4, 8), rng.int(6, 14), rng.int(2, 3), (px, py) => { if (isRock[get(px, py)]) set(px, py, B.BAUXITE); }); }
+      if (r.key === 'snow') for (let k = 0; k < w / 40; k++) { const x = rng.int(s.x0, s.x1 - 1); stampEllipse(x, surf[x] + rng.int(5, 25), rng.int(3, 8), rng.int(2, 4), (px, py) => { if (isRock[get(px, py)]) set(px, py, B.ICE); }); }
+    } else if (r.key === 'coast') {
+      const sw = Math.round(w * .45), sx = rng.chance(.5) ? s.x0 + 4 : s.x1 - sw - 4;
+      for (let x = sx; x < sx + sw; x++) { const d = Math.abs(x - (sx + sw / 2)) / (sw / 2); const cut = Math.round(22 * (1 - d * d)); for (let k = 0; k < cut; k++) set(x, surf[x] + k, 0); surf[x] += cut; set(x, surf[x], B.SAND); set(x, surf[x] + 1, B.SAND); }
+      fillWaterDown(sx, sx + sw, Math.min(surf[sx], surf[sx + sw - 1]) + 1);
+      for (let x = s.x0; x < s.x1; x++) for (let k = 0; k < 4; k++) if (rng.chance(.07)) set(x, surf[x] + k, B.BLACKSAND);
+    } else if (r.key === 'desert' || r.key === 'dunes') {
+      if (r.key === 'desert') for (let k = 0; k < w / 18; k++) { const x = rng.int(s.x0, s.x1 - 1); stampEllipse(x, surf[x] + rng.int(4, 18), rng.int(5, 12), rng.int(1, 2), (px, py) => { if (isRock[get(px, py)]) set(px, py, B.SALTPETER); }); }
+    } else if (r.key === 'volcano') {
+      const vc = mid;
+      stampEllipse(vc, surf[vc] + 4, Math.max(4, w * .05), 6, (px, py) => set(px, py, py >= surf[vc] + 1 ? B.LAVA : 0));
+      for (let k = 0; k < w / 6; k++) { const x = vc + Math.round(rng.range(-w * .3, w * .3)); if (inb(x, surf[x])) stampEllipse(x, surf[x] + rng.int(0, 6), rng.int(1, 3), rng.int(1, 2), (px, py) => { if (isRock[get(px, py)]) set(px, py, B.SULFUR); }); }
+      for (let k = 0; k < 3; k++) { const x = vc + rng.int(-w * .2, w * .2); let y = surf[x] + 10; for (let j = 0; j < 80 && inb(x, y); j++) { stampEllipse(x + j * .5, y + j * .8, 2, 2, (px, py) => { if (isRock[get(px, py)]) set(px, py, B.LAVA); }); } }
+    } else if (r.key === 'highland') {
+      for (let k = 0; k < w / 30; k++) { const x = rng.int(s.x0, s.x1 - 1), ore = rng.pick([B.CHALCOPYRITE, B.NATIVECU, B.GALENA, B.HEMATITE]); for (let j = 0; j < rng.int(3, 8); j++) set(x + (j >> 2), surf[x] + j, ore); }
+    } else if (r.key === 'saltlake') {
+      const lw = Math.round(w * .6), lx = mid - (lw >> 1);
+      for (let x = lx; x < lx + lw; x++) { const d = Math.abs(x - mid) / (lw / 2); const cut = Math.round(4 * (1 - d * d)); for (let k = 0; k < cut; k++) set(x, surf[x] + k, 0); surf[x] += cut; for (let k = 0; k < 5; k++) set(x, surf[x] + 1 + k, B.ROCKSALT); }
+      fillWaterDown(lx, lx + lw, Math.min(surf[lx], surf[lx + lw - 1]) + 1);
+    } else if (r.key === 'geothermal') {
+      for (let k = 0; k < Math.max(2, w / 50); k++) { const px = rng.int(s.x0 + 5, s.x1 - 10), pw = rng.int(4, 9); for (let x = px; x < px + pw; x++) { set(x, surf[x], 0); set(x, surf[x] + 1, 0); surf[x] += 2; } fillWaterDown(px, px + pw, surf[px] - 1); }
+      for (let k = 0; k < w / 20; k++) { const x = rng.int(s.x0, s.x1 - 1); stampEllipse(x, surf[x] + rng.int(4, 20), rng.int(1, 3), rng.int(1, 2), (px, py) => { if (isRock[get(px, py)]) set(px, py, B.TOURMALINE); }); }
+    } else if (r.key === 'maghill') {
+      stampEllipse(mid, surf[mid] + H * .05, w * .3, H * .035, (px, py) => { if (isRock[get(px, py)]) set(px, py, rng.chance(.85) ? B.MAGNETITE : get(px, py)); });
+    } else if (r.key === 'crystalwaste') {
+      for (let k = 0; k < Math.max(3, w / 22); k++) { const x = rng.int(s.x0 + 4, s.x1 - 4), h = rng.int(10, 30), tilt = rng.range(-.6, .6), th = rng.int(2, 4);
+        for (let j = -6; j < h; j++) for (let t = 0; t < th; t++) set(Math.round(x + j * tilt) + t, surf[x] - j, B.CRYSTAL); }
+    } else if (r.key === 'glowfog') {
+      for (let k = 0; k < Math.max(2, w / 45); k++) { const px = rng.int(s.x0 + 5, s.x1 - 10), pw = rng.int(5, 12); for (let x = px; x < px + pw; x++) { set(x, surf[x], 0); surf[x] += 1; } fillWaterDown(px, px + pw, surf[px]); }
+      for (let x = s.x0; x < s.x1; x++) for (let k = 1; k < 8; k++) if (rng.chance(.03)) set(x, surf[x] + k, B.GLOWSTONE);
+    } else if (r.key === 'revfalls') {
+      const vc = mid, side = rng.chance(.5) ? -1 : 1;
+      let edge = vc; for (let x = vc; Math.abs(x - vc) < w * .45; x += side) { if (surf[x] < surf[vc] - 20) { edge = x - side; break; } }
+      const top = surf[edge + side * 3] - 4;
+      for (let x = edge; x !== edge - side * 4; x -= side) for (let y = top; y < surf[x]; y++) if (get(x, y) === 0) set(x, y, B.REVWATER);
+    }
+    // 地表の薄い層：高原は岩が露出
+    if (r.key === 'highland') for (let x = s.x0; x < s.x1; x++) if (rng.chance(.5)) set(x, surf[x], B.SHALLOW);
+  }
+  lap('地域');
+
+  /* 4. 鉱石（洞窟より先に置くので、洞窟が鉱石を削ることはあっても、鉱石が通路をふさぐことはない） */
+  const hostOK = (x, y, strataSet) => inb(x, y) && isRock[blocks[idx(x, y)]] && strataSet.has(layer[idx(x, y)]) && y > surf[x] + 1;
+  const yInStrata = (x, s) => { const top = s === 1 ? surf[x] + 3 : bounds[s][x], bot = s === 7 ? H - 2 : bounds[s + 1][x]; return Math.round(rng.range(top, Math.max(top + 1, bot))); };
+  const strataArea = s => { let a = 0; for (let x = 0; x < W; x += 16) { const top = s === 1 ? surf[x] : bounds[s][x], bot = s === 7 ? H : bounds[s + 1][x]; a += Math.max(0, bot - top) * 16; } return a; };
+  const DEPOSITS = [
+    {ore: 'NATIVECU', type: 'blob', strata: [1], dens: 55, r: [1, 2]},
+    {ore: 'MALACHITE', type: 'blob', strata: [1], dens: 55, r: [1, 2]},
+    {ore: 'GLOWSTONE', type: 'blob', strata: [1, 2, 3], dens: 1.5, r: [0, 1]},
+    {ore: 'HEMATITE', type: 'layer', strata: [2], dens: 9, len: [40, 150], th: [2, 3]},
+    {ore: 'COAL', type: 'layer', strata: [2], dens: 7, len: [30, 110], th: [1, 2]},
+    {ore: 'SIDERITE', type: 'blob', strata: [2], dens: 14, r: [2, 3]},
+    {ore: 'PYRITE', type: 'vein', strata: [2, 3], dens: 10, len: [20, 60], w: [1, 1]},
+    {ore: 'CHALCOPYRITE', type: 'vein', strata: [3], dens: 16, len: [25, 90], w: [1, 2]},
+    {ore: 'GALENA', type: 'vein', strata: [3], dens: 11, len: [20, 70], w: [1, 2]},
+    {ore: 'SPHALERITE', type: 'vein', strata: [3], dens: 10, len: [20, 70], w: [1, 1]},
+    {ore: 'FLUORITE', type: 'vein', strata: [3], dens: 7, len: [15, 50], w: [1, 1]},
+    {ore: 'CASSITERITE', type: 'vein', strata: [3, 5], dens: 3, len: [10, 40], w: [1, 1]},
+    {ore: 'MAGNETITE', type: 'blob', strata: [5], dens: 18, r: [2, 5]},
+    {ore: 'CHROMITE', type: 'blob', strata: [5], dens: 7, r: [2, 3]},
+    {ore: 'SCHEELITE', type: 'blob', strata: [5], dens: 6, r: [1, 2]},
+    {ore: 'GLOWSTONE', type: 'blob', strata: [6], dens: 10, r: [1, 2]},
+    {ore: 'FLOATORE', type: 'blob', strata: [6], dens: 6, r: [1, 2]},
+    {ore: 'COLDORE', type: 'blob', strata: [6], dens: 5, r: [1, 2]},
+    {ore: 'MANADRAIN', type: 'blob', strata: [6], dens: 4, r: [1, 2]},
+    {ore: 'GLOWSTONE', type: 'blob', strata: [7], dens: 22, r: [1, 3]},
+    {ore: 'FLOATORE', type: 'blob', strata: [7], dens: 14, r: [1, 3]},
+    {ore: 'COLDORE', type: 'blob', strata: [7], dens: 12, r: [1, 3]},
+    {ore: 'MANADRAIN', type: 'blob', strata: [7], dens: 10, r: [1, 3]},
+  ];
+  const areaCache = {};
+  const placeDeposit = (dp, x, y) => {
+    const id = B[dp.ore], ss = new Set(dp.strata);
+    if (dp.type === 'blob') { const r = rng.int(dp.r[0], dp.r[1]) + .5, ry = Math.max(.5, r * rng.range(.6, 1)); stampEllipse(x, y, r, ry, (px, py) => { if (hostOK(px, py, ss) && cellHash(seedNum, px, py) < .85) blocks[idx(px, py)] = id; }); }
+    else if (dp.type === 'layer') { const len = rng.int(dp.len[0], dp.len[1]), th = rng.int(dp.th[0], dp.th[1]), slope = rng.range(-.08, .08), ln = makeNoise1D(rng, 25, 2);
+      for (let j = 0; j < len; j++) { const px = x + j, py0 = Math.round(y + j * slope + ln(j) * 2); if (ln(j * 3 + 99) < -.6) continue; for (let t = 0; t < th; t++) if (hostOK(px, py0 + t, ss)) blocks[idx(px, py0 + t)] = id; } }
+    else if (dp.type === 'vein') { let px = x, py = y, ang = rng.range(.35, 1.2) * (rng.chance(.5) ? 1 : -1) + (rng.chance(.5) ? 0 : Math.PI); const len = rng.int(dp.len[0], dp.len[1]), wd = rng.int(dp.w[0], dp.w[1]);
+      for (let j = 0; j < len; j++) { ang += rng.range(-.25, .25); px += Math.cos(ang); py += Math.sin(ang); for (let a = 0; a < wd; a++) for (let b = 0; b < wd; b++) { const qx = Math.round(px) + a, qy = Math.round(py) + b; if (hostOK(qx, qy, ss)) blocks[idx(qx, qy)] = id; }
+        if (rng.chance(.02)) placeDeposit({...dp, len: [5, 15]}, Math.round(px), Math.round(py)); } }
+  };
+  for (const dp of DEPOSITS) {
+    const key = dp.strata.join(',');
+    if (!(key in areaCache)) areaCache[key] = dp.strata.reduce((a, s) => a + strataArea(s), 0);
+    const count = Math.round(dp.dens * areaCache[key] / 100000);
+    for (let k = 0; k < count; k++) { const x = rng.int(0, W - 1), s = rng.pick(dp.strata); placeDeposit(dp, x, yInStrata(x, s)); }
+  }
+  // 町の近くには序盤の銅を必ず置く
+  for (let k = 0; k < 14; k++) { const x = cx + Math.round(rng.range(-townW * 2.5, townW * 2.5)); placeDeposit({ore: rng.chance(.5) ? 'NATIVECU' : 'MALACHITE', type: 'blob', strata: [1], r: [1, 2]}, x, surf[x] + rng.int(4, 18)); }
+  lap('鉱石');
+
+  /* 5. 洞窟 */
+  const carve = (x, y, r) => { stampEllipse(x, y, r, r * .8, (px, py) => { const i = idx(px, py); if (py > surf[px] + 2 && !protectedBlk[blocks[i]]) blocks[i] = 0; }); };
+  const worm = (x, y, len, r0, r1, flat) => { let ang = rng.range(0, Math.PI * 2), r = rng.range(r0, r1);
+    for (let j = 0; j < len; j++) { ang += rng.range(-.35, .35); r = Math.max(r0, Math.min(r1, r + rng.range(-.25, .25))); x += Math.cos(ang); y += Math.sin(ang) * flat; if (!inb(x | 0, y | 0)) break; carve(x, y, r); } };
+  const caveSpec = {1: [6, 1, 2, .55], 2: [6, 1, 2.6, .5], 3: [4, 1, 2, .7], 4: [3, 1, 2, .6], 5: [2, 1, 2, .6], 6: [7, 2, 4, .6], 7: [7, 2.5, 5, .5]};
+  for (let s = 1; s <= 7; s++) { const [dens, r0, r1, flat] = caveSpec[s], count = Math.round(dens * strataArea(s) / 100000);
+    for (let k = 0; k < count; k++) { const x = rng.int(0, W - 1); worm(x, yInStrata(x, s), rng.int(40, 200), r0, r1, flat); } }
+  for (const lime of spans.filter(q => q.r.key === 'limestone')) for (let k = 0; k < (lime.x1 - lime.x0) / 15; k++) { const x = rng.int(lime.x0, lime.x1 - 1); worm(x, surf[x] + rng.int(8, 60), rng.int(60, 160), 2, 4, .4); }
+  // 洞窟の入口
+  for (let k = 0; k < W / 220; k++) { const x = rng.int(0, W - 1); if (Math.abs(x - cx) < townW) continue; let px = x, py = surf[x] + 1; const ang0 = Math.PI / 2 + rng.range(-.6, .6); let ang = ang0;
+    for (let j = 0; j < rng.int(25, 70); j++) { ang += rng.range(-.2, .2); px += Math.cos(ang); py += Math.sin(ang); stampEllipse(px, py, 1.6, 1.4, (qx, qy) => { const i = idx(qx, qy); if (!protectedBlk[blocks[i]]) blocks[i] = 0; }); } }
+  // 晶洞（深さ4）：空洞のふちに水晶・トルマリン・宝石の原石
+  const geodeCount = Math.round(9 * strataArea(4) / 100000);
+  for (let k = 0; k < geodeCount; k++) { const x = rng.int(0, W - 1), y = yInStrata(x, 4), rx = rng.int(3, 7), ry = rng.int(2, 5);
+    stampEllipse(x, y, rx + 1.2, ry + 1.2, (px, py, d) => { const i = idx(px, py); if (protectedBlk[blocks[i]] || layer[i] !== 4) return; const inner = ((px - x) / rx) ** 2 + ((py - y) / ry) ** 2; if (inner <= 1) blocks[i] = 0; else if (isSolid[blocks[i]]) { const h = cellHash(seedNum + 7, px, py); blocks[i] = h < .45 ? B.QUARTZ : h < .6 ? B.TOURMALINE : h < .66 ? B.GEM : blocks[i]; } }); }
+  lap('洞窟');
+
+  /* 不思議な場所（地下のポケット）：深い・遠いほど大きい */
+  const pocketCount = Math.max(6, Math.round(16 * scale));
+  const pocketTypes = [['petrified', [1, 3]], ['glowforest', [2, 7]], ['frozen', [3, 7]], ['resonance', [4, 4]], ['floatcave', [4, 7]], ['silent', [5, 7]]];
+  for (let k = 0; k < pocketCount; k++) {
+    const [type, [sa, sb]] = pocketTypes[k % pocketTypes.length];
+    let x = rng.int(0, W - 1); const dist = Math.abs(x - cx) / (W / 2); if (dist < .12) x = (x + (W >> 2)) % W;
+    const s = rng.int(sa, sb), y = yInStrata(x, s), depthF = (y - surfaceBase) / (H - surfaceBase), distF = Math.abs(x - cx) / (W / 2);
+    const rx = Math.round(10 + 22 * depthF + 16 * distF) * (type === 'resonance' ? .6 : 1), ry = rx * .55;
+    const wall = {glowforest: B.GLOWSTONE, petrified: B.PETRIFIED, floatcave: B.FLOATORE, frozen: B.ICE, silent: B.MANADRAIN, resonance: B.QUARTZ}[type];
+    stampEllipse(x, y, rx + 2, ry + 2, (px, py) => { const i = idx(px, py); if (py <= surf[px] + 3 || protectedBlk[blocks[i]]) return; const inner = ((px - x) / rx) ** 2 + ((py - y) / ry) ** 2;
+      if (inner <= 1) blocks[i] = 0; else if (isSolid[blocks[i]] && cellHash(seedNum + 3, px, py) < .7) blocks[i] = wall; });
+    // 中身
+    if (type === 'glowforest') for (let j = 0; j < rx; j++) { const px = Math.round(x + rng.range(-rx * .8, rx * .8)); let py = Math.round(y + ry * .9); while (py > y - ry && get(px, py) === 0) py++; for (let h = 1; h < rng.int(3, 8); h++) if (get(px, py - h) === 0) set(px, py - h, B.GLOWSTONE); }
+    if (type === 'petrified') for (let j = 0; j < rx / 3; j++) { const px = Math.round(x + rng.range(-rx * .7, rx * .4)), py = Math.round(y + ry * .5 - rng.int(0, 3)); for (let h = 0; h < rng.int(5, 12); h++) if (get(px + h, py) === 0) set(px + h, py, B.PETRIFIED); }
+    if (type === 'floatcave') for (let j = 0; j < rx / 3; j++) { const px = x + rng.range(-rx * .7, rx * .7), py = y + rng.range(-ry * .6, ry * .3); stampEllipse(px, py, rng.int(1, 3), 1.2, (qx, qy) => { if (get(qx, qy) === 0) set(qx, qy, rng.chance(.4) ? B.FLOATORE : B.ANOMROCK); }); }
+    if (type === 'frozen') for (let j = 0; j < rx; j++) { const px = Math.round(x + rng.range(-rx, rx)), py = Math.round(y + rng.range(-ry, ry)); if (isSolid[get(px, py)]) set(px, py, rng.chance(.3) ? B.COLDORE : B.ICE); }
+    features.push({kind: 'pocket', type, x, y, r: rx});
+  }
+  lap('不思議な場所');
+
+  /* 6. 施設 */
+  // 町：建物と竪坑
+  const shaftX = cx + rng.int(-6, 6), shaftBottom = Math.round((bounds[2][shaftX] + bounds[3][shaftX]) / 2);
+  for (let k = 0; k < 6; k++) { const bw = rng.int(6, 11), bh = rng.int(5, 8), bx = town.x0 + 4 + Math.round((town.x1 - town.x0 - 16) * k / 6); if (Math.abs(bx - shaftX) < 14) continue;
+    for (let y = tAvg - bh; y < tAvg; y++) for (let x = bx; x < bx + bw; x++) set(x, y, (y === tAvg - bh || x === bx || x === bx + bw - 1) && !((x === bx || x === bx + bw - 1) && y > tAvg - 3) ? B.TOWN : 0); }
+  for (let y = tAvg - 3; y <= shaftBottom; y++) { set(shaftX - 1, y, y < tAvg ? (y === tAvg - 3 ? B.TIMBER : 0) : B.TIMBER); set(shaftX, y, B.LADDER); set(shaftX + 1, y, B.LADDER); set(shaftX + 2, y, y < tAvg ? (y === tAvg - 3 ? B.TIMBER : 0) : B.TIMBER); }
+  const adits = [Math.round(tAvg + (bounds[2][shaftX] - tAvg) * .5), Math.round((bounds[2][shaftX] + shaftBottom) / 2), shaftBottom - 1];
+  for (const ay of adits) { const dir = rng.chance(.5) ? -1 : 1, len = rng.int(40, 90);
+    for (let h = 0; h < 3; h++) set(dir < 0 ? shaftX - 1 : shaftX + 2, ay - h, 0); // 竪坑の壁に横坑の口を開ける
+    for (let j = 1; j < len; j++) { const x = dir < 0 ? shaftX - j : shaftX + 1 + j; for (let h = 0; h < 3; h++) { const i = idx(x, ay - h); if (!protectedBlk[blocks[i]] || blocks[i] === B.WATER) blocks[i] = 0; } set(x, ay + 1, j % 7 === 0 ? B.TIMBER : (isSolid[get(x, ay + 1)] ? get(x, ay + 1) : B.TIMBER)); if (j % 7 === 0) { set(x, ay - 3, B.TIMBER); } } }
+  // 序盤の鉱石は、町の横坑の壁に必ず顔を出させる（大きい世界でも最初の銅に迷わないように）
+  let oreTurn = 0;
+  for (const ay of adits.slice(0, 2)) for (let k = 0; k < 3; k++) {
+    const x = shaftX + (rng.chance(.5) ? -1 : 1) * rng.int(8, 36), y = rng.chance(.5) ? ay - 3 : ay + 2;
+    const ore = (oreTurn++) % 2 ? B.MALACHITE : B.NATIVECU;
+    stampEllipse(x, y, rng.int(1, 2) + .5, 1.2, (px, py) => { if (isRock[get(px, py)]) set(px, py, ore); });
+  }
+  features.push({kind: 'town', x: cx, y: tAvg - 4, r: townW / 2});
+  // 廃坑
+  const mineCount = Math.max(2, Math.round(3 * scale));
+  for (let k = 0; k < mineCount; k++) { const side = k % 2 ? 1 : -1, x = Math.round(cx + side * W * rng.range(.07, .33)); const bottom = rng.chance(.5) ? bounds[3][x] + rng.int(5, 30) : bounds[2][x] + rng.int(5, 30);
+    for (let y = surf[x] - 1; y < bottom; y++) { set(x - 1, y, B.TIMBER); set(x, y, B.LADDER); set(x + 1, y, B.LADDER); set(x + 2, y, B.TIMBER); }
+    for (let t = 0; t < 3; t++) { const ay = Math.round(surf[x] + (bottom - surf[x]) * (t + 1) / 4), dir = rng.chance(.5) ? -1 : 1, len = rng.int(30, 80), collapseAt = rng.chance(.6) ? rng.int(10, len - 5) : -1;
+      for (let h = 0; h < 3; h++) set(dir < 0 ? x - 1 : x + 2, ay - h, 0);
+      for (let j = 2; j < len; j++) { const px = x + dir * j; for (let h = 0; h < 3; h++) set(px, ay - h, (collapseAt > 0 && j >= collapseAt && j < collapseAt + 6) ? B.RUBBLE : 0); if (j % 6 === 0) { set(px, ay + 1, B.TIMBER); set(px, ay - 3, B.TIMBER); } } }
+    features.push({kind: 'mine', x, y: Math.round((surf[x] + bottom) / 2), r: 10}); }
+  // コウモリの巣の洞窟（硝石）：町から少し離れた浅い層
+  for (let k = 0; k < Math.max(1, Math.round(1.5 * scale)); k++) { const x = Math.round(cx + (rng.chance(.5) ? -1 : 1) * W * rng.range(.12, .3)), s = rng.chance(.5) ? 1 : 2, y = yInStrata(x, s), rx = rng.int(8, 13), ry = rng.int(4, 7);
+    stampEllipse(x, y, rx, ry, (px, py) => { const i = idx(px, py); if (py > surf[px] + 3 && !protectedBlk[blocks[i]]) blocks[i] = 0; });
+    for (let px = x - rx; px <= x + rx; px++) { let py = y; while (py < y + ry + 3 && get(px, py) === 0) py++; if (isSolid[get(px, py)] && rng.chance(.7)) { set(px, py, B.SALTPETER); if (rng.chance(.5)) set(px, py + 1, B.SALTPETER); } }
+    features.push({kind: 'batcave', x, y, r: rx}); }
+  // 古い鍛冶場の跡
+  for (let k = 0; k < Math.max(2, Math.round(2 * scale)); k++) { const x = Math.round(cx + (k % 2 ? 1 : -1) * W * rng.range(.1, .4)), s = rng.chance(.5) ? 2 : 3, y = yInStrata(x, s), rw = rng.int(9, 14), rh = rng.int(5, 7);
+    for (let py = y - rh; py <= y; py++) for (let px = x; px <= x + rw; px++) set(px, py, (py === y - rh || py === y || px === x || px === x + rw) ? B.FORGE : 0);
+    features.push({kind: 'forge', x: x + (rw >> 1), y: y - (rh >> 1), r: 8}); }
+  // 浮島：遠い地域の上空。ほかの浮島や地表と重ならないように間隔を空ける
+  const islands = [];
+  for (const s of spans) { if (s.r.tier < 2) continue; const w = s.x1 - s.x0; const cnt = s.r.tier === 3 ? Math.max(1, Math.round(w / 110)) : (rng.chance(.6) ? 1 : 0);
+    for (let k = 0; k < cnt; k++) for (let tries = 0; tries < 15; tries++) {
+      const rx = rng.int(9, 20), ry = rng.int(3, 6); if (w < rx * 2 + 6) break;
+      const x = rng.int(s.x0 + rx, s.x1 - rx), y = rng.int(Math.round(skyH * .3), Math.round(skyH * 1.15));
+      let minSurf = H; for (let qx = x - rx; qx <= x + rx; qx++) if (qx >= 0 && qx < W) minSurf = Math.min(minSurf, surf[qx]);
+      if (y + ry > minSurf - 14) continue;
+      if (islands.some(o => Math.abs(o.x - x) < o.rx + rx + 10 && Math.abs(o.y - y) < o.ry + ry + 8)) continue;
+      islands.push({x, y, rx, ry});
+      stampEllipse(x, y, rx, ry, (px, py) => { if (py < y) return; const i = idx(px, py); if (blocks[i] !== 0) return; blocks[i] = py === y ? B.GRASS : cellHash(seedNum + 11, px, py) < .25 ? B.FLOATORE : B.DIRT; layer[i] = 8; });
+      features.push({kind: 'islands', x, y, r: rx}); break;
+    } }
+  lap('施設');
+
+  /* 7. 液体：地底湖と最深部の溶岩 */
+  const lakeCount = Math.round(10 * scale * (H / 600));
+  const visit = new Uint8Array(0);
+  for (let k = 0; k < lakeCount; k++) {
+    const x = rng.int(0, W - 1), s = rng.int(2, 5); let y = yInStrata(x, s);
+    if (blocks[idx(x, y)] !== 0) continue;
+    while (y < H - 1 && blocks[idx(x, y + 1)] === 0) y++;
+    const level = y - rng.int(2, 6), q = [idx(x, y)], seen = new Set(q), cells = [];
+    let ok = true;
+    while (q.length) { const i = q.pop(), px = i % W, py = (i / W) | 0; cells.push(i); if (cells.length > 2500 || py <= surf[px] + 2) { ok = false; break; }
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = px + dx, ny = py + dy; if (!inb(nx, ny) || ny < level) continue; const ni = idx(nx, ny); if (!seen.has(ni) && blocks[ni] === 0) { seen.add(ni); q.push(ni); } } }
+    if (ok) for (const i of cells) blocks[i] = B.WATER;
+  }
+  for (let x = 0; x < W; x++) for (let y = Math.round(H * .955); y < H; y++) { const i = idx(x, y); if (blocks[i] === 0) blocks[i] = B.LAVA; }
+  lap('液体');
+
+  /* 片付け：1ブロック幅の柱と浮き石を取り除く（通路の栓対策） */
+  let pillarsFound = 0, pillarsRemoved = 0, orePillars = 0;
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const i = y * W + x, id = blocks[i]; if (!isSolid[id] || y <= surf[x] + 1 || protectedBlk[id] || layer[i] === 8) continue;
+    if (passable[blocks[i - 1]] && passable[blocks[i + 1]] && blocks[i - 1] !== B.WATER && blocks[i + 1] !== B.WATER) {
+      pillarsFound++;
+      if (isOre[id]) { orePillars++; continue; }
+      blocks[i] = 0; pillarsRemoved++;
+    }
+  }
+  lap('片付け');
+
+  /* 8. 崩れやすさ */
+  const stab = new Uint8Array(N);
+  const air = new Int32Array((W + 1) * (H + 1)); // 空気の累積和
+  for (let y = 0; y < H; y++) { let row = 0; for (let x = 0; x < W; x++) { row += (!isSolid[blocks[y * W + x]] && y > surf[x]) ? 1 : 0; air[(y + 1) * (W + 1) + x + 1] = air[y * (W + 1) + x + 1] + row; } }
+  const R = 3, layerBase = [0, .45, .4, .25, .45, .1, .55, .6, .2];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = y * W + x, id = blocks[i]; if (!isSolid[id] || y < surf[x]) continue;
+    const x0 = Math.max(0, x - R), x1 = Math.min(W, x + R + 1), y0 = Math.max(0, y - R), y1 = Math.min(H, y + R + 1);
+    const a = air[y1 * (W + 1) + x1] - air[y0 * (W + 1) + x1] - air[y1 * (W + 1) + x0] + air[y0 * (W + 1) + x0];
+    const cav = a / ((x1 - x0) * (y1 - y0));
+    const v = layerBase[layer[i]] * .6 + BLOCKS[id].stab * .5 + cav * .9;
+    stab[i] = Math.max(0, Math.min(255, Math.round(v * 200))); }
+  lap('崩れやすさ');
+
+  world = {W, H, N, blocks, layer, surf, regionOf, bounds, spans, features, stab, cx, townW, tAvg, shaftX, skyH, surfaceBase, seed: seedStr, size: sizeKey};
+  /* 9. 検証 */
+  world.validation = validate(world);
+  world.pillars = {found: pillarsFound, removed: pillarsRemoved, ore: orePillars};
+  lap('検証');
+  T['合計'] = performance.now() - t0;
+  world.timing = T;
+  return world;
+}
+
+/* ---------------- 検証：町から歩いて行ける範囲 ---------------- */
+function validate(w) {
+  const {W, H, blocks, surf, cx} = w;
+  const winW = Math.min(W, 1600), x0 = Math.max(0, Math.min(W - winW, cx - (winW >> 1))), x1 = x0 + winW;
+  let maxB3 = 0; for (let x = x0; x < x1; x++) maxB3 = Math.max(maxB3, w.bounds[4][x]);
+  const y1 = Math.min(H - 1, maxB3 + 5), WH = winW * y1;
+  const J = 4; // ジャンプで上がれるブロック数（初速370・重力900 → 約76px ≒ 4ブロック）
+  const pass = (x, y) => x >= x0 && x < x1 && y >= 1 && y < y1 && passable[blocks[y * W + x]] && passable[blocks[(y - 1) * W + x]];
+  const climb = (x, y) => climbable[blocks[y * W + x]] || climbable[blocks[(y - 1) * W + x]];
+  const grounded = (x, y) => y + 1 >= y1 || !passable[blocks[(y + 1) * W + x]] || climb(x, y);
+  const li = (x, y) => y * winW + (x - x0);
+  const seen = new Uint8Array(WH), dist = new Uint16Array(WH).fill(65535);
+  let q = new Int32Array(1 << 20), qh = 0, qt = 0;
+  const push = (x, y, j, d) => { const c = li(x, y), bit = 1 << j; if (seen[c] & bit) return; seen[c] |= bit; if (d < dist[c]) dist[c] = d; if (qt + 3 >= q.length) { const nq = new Int32Array(q.length * 2); nq.set(q.subarray(qh, qt)); qt -= qh; qh = 0; q = nq; } q[qt++] = c; q[qt++] = j; q[qt++] = d; };
+  const sx = w.cx - 12; let sy = surf[sx] - 1; while (!pass(sx, sy) && sy > 2) sy--;
+  push(sx, sy, J, 0);
+  while (qh < qt) {
+    const c = q[qh++], j = q[qh++], d = q[qh++], x = (c % winW) + x0, y = (c / winW) | 0;
+    const g = grounded(x, y), cl = climb(x, y);
+    if (g) {
+      // 地面・はしご・水中：左右に歩く、1段の段差を自動で上る、ジャンプを始める
+      for (const dx of [-1, 1]) { const nx = x + dx;
+        if (pass(nx, y)) push(nx, y, grounded(nx, y) ? J : 0, d + 1);
+        else if (pass(nx, y - 1) && pass(x, y - 1)) push(nx, y - 1, J, d + 1); }
+      if (pass(x, y - 1)) push(x, y - 1, cl ? J : J - 1, d + 1);
+      if (cl && pass(x, y + 1)) push(x, y + 1, J, d + 1);
+    } else if (j > 0) {
+      // 上昇中：上か横へ（どちらも残りの上昇量を使う）
+      if (pass(x, y - 1)) push(x, y - 1, j - 1, d + 1);
+      for (const dx of [-1, 1]) if (pass(x + dx, y)) push(x + dx, y, j - 1, d + 1);
+      if (pass(x, y + 1)) push(x, y + 1, 0, d + 1);
+    } else {
+      // 落下中：真下か斜め下へ
+      if (pass(x, y + 1)) push(x, y + 1, 0, d + 1);
+      for (const dx of [-1, 1]) if (pass(x + dx, y + 1) && pass(x + dx, y)) push(x + dx, y + 1, 0, d + 1);
+    }
+  }
+  // 序盤の鉱石：歩いて行ける場所から2ブロック以内にあるか
+  const targets = {NATIVECU: B.NATIVECU, MALACHITE: B.MALACHITE, CASSITERITE: B.CASSITERITE};
+  const res = {};
+  for (const k in targets) res[k] = {id: targets[k], best: 65535, x: -1, y: -1, count: 0};
+  let reachable = 0; for (let c = 0; c < WH; c++) if (seen[c]) reachable++;
+  for (let y = 1; y < y1; y++) for (let x = x0; x < x1; x++) { const id = blocks[y * W + x];
+    for (const k in res) { const r = res[k]; if (id !== r.id) continue; let best = 65535;
+      for (let dy = -2; dy <= 3; dy++) for (let dx = -2; dx <= 2; dx++) { const px = x + dx, py = y + dy; if (px < x0 || px >= x1 || py < 1 || py >= y1) continue; const dd = dist[li(px, py)]; if (dd < best) best = dd; }
+      if (best < 65535) { r.count++; if (best < r.best) { r.best = best; r.x = x; r.y = y; } } } }
+  return {x0, x1, y1, winW, seen, dist, res, reachable, spawn: [sx, sy]};
+}
+
+
+
+/* =====================================================================
+   ここから下が「遊べる試作」の部分（Phaser版）
+   上の生成コードは worldgen-sandbox.html と同じ。下は play-sandbox.html をもとに、描画を Phaser に置きかえた
+   ===================================================================== */
+const T = 18;                                   // 1ブロック 18px（確定）
+const GROW = [2, 1.5];                          // 生成器は 1×2 の体を前提に作られているので、2×3 に合わせて引き伸ばす（PR #28 と同じ）
+const PLAYER = {w: 27, h: 52};                  // 幅1.5ブロック（オーナー、2026-11-27）、高さは3ブロック弱
+const REACH = 6;
+const g0 = 50 * T;
+const PHYS = {gravity: g0, jump: Math.sqrt(2 * g0 * 4.3 * T), walk: 8.5 * T, maxFall: 34 * T, swim: 4.5 * T,
+              waterGravity: 14 * T, waterFall: 5 * T, climb: 6 * T, fly: 24 * T};
+const SWING = 0.3;                              // 1振りの秒数（design.md の案、PR #47）
+const $ = id => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const DPR = Math.min(3, window.devicePixelRatio || 1);
+
+const HOST_BY_LAYER = ['SHALLOW', 'SHALLOW', 'SEDROCK', 'VEINROCK', 'PEGMATITE', 'GRANITE', 'ANOMROCK', 'ABYSSROCK', 'SHALLOW'].map(k => B[k]);
+const NOMINE = new Set(['TOWN', 'MILL', 'FORGE'].map(k => B[k]));
+
+/* ---------- 硬さ（design.md の案、PR #47。ここにない岩・鉱石はこの試作の仮の値） ---------- */
+const HARD_BY_KEY = {
+  GRASS: 1, DIRT: 2, SAND: 1, SNOW: 1, ASH: 1, MUD: 2, METALSOIL: 2, GLOWMOSS: 1,
+  GRAVEL: 2, SHALLOW: 5, LIMESTONE: 5, SEDROCK: 10, SHALE: 10, VEINROCK: 15, PEGMATITE: 20, GRANITE: 40, BASALT: 40,
+  ANOMROCK: 56, ABYSSROCK: 76, CRYSTAL: 20, PETRIFIED: 10, ICE: 4,
+  TRUNK: 3, LEAVES: 1, METALLEAF: 8, LADDER: 2, TIMBER: 3, RUBBLE: 4,
+  NATIVECU: 6, MALACHITE: 7, CHALCOPYRITE: 7, HEMATITE: 12, MAGNETITE: 12, LIMONITE: 10, SIDERITE: 8, PYRITE: 13, BLACKSAND: 2,
+  CASSITERITE: 13, GALENA: 5, SPHALERITE: 7, GOLD: 5, COAL: 5, FLUORITE: 8, SCHEELITE: 10, CHROMITE: 11, SALTPETER: 4,
+  SULFUR: 4, ROCKSALT: 5, BAUXITE: 4, QUARTZ: 14, TOURMALINE: 15, GEM: 16, GLOWSTONE: 6, FLOATORE: 8, COLDORE: 10, MANADRAIN: 12,
+};
+const HARD = BLOCKS.map(b => HARD_BY_KEY[b.key] ?? 5);
+let pick = +(params.get('pick') || 5);          // ツルハシの先端の硬さ。初期のツルハシ5
+
+/* ---------- 状態 ---------- */
+let blocks = null, W = 0, H = 0;   // world は上の生成コードで宣言済み
+let player = null, cam = {x: 0, y: 0}, zoom = 1;   // cam は画面の中心のワールド座標
+let inv = new Map(), selected = -1, mode = 'dig';
+let mining = null;                  // {x, y, t, swings}
+let pointer = null;                 // 画面上で押している位置 {sx, sy, id}
+let lastRegion = -1, lastLayer = -1, toastTimer = 0;
+const input = {left: false, right: false, up: false, down: false, jump: false};
+const dbg = {on: false, fly: false, instant: false, light: false, xray: false, grid: false, reach: false, map: false};
+let mapImg = null, mapCtx = null, mapData = null, mapDirty = false;
+let fps = 0, fpsAcc = 0, fpsN = 0;
+const coarse = matchMedia('(pointer: coarse)').matches;
+let zoomBlocks = +(params.get('zoom') || 0) || 26;   // 画面の短い辺に映るブロック数
+
+const tileAt = (x, y) => (x < 0 || x >= W || y < 0 || y >= H) ? B.GRANITE : blocks[y * W + x];
+
+/* ---------- 掘れるか・何振りか ---------- */
+function digInfo(x, y) {
+  const id = tileAt(x, y), b = BLOCKS[id];
+  if (NOMINE.has(id) || b.cat === 'liquid' || b.cat === 'air') return {can: false, why: `${b.name}は掘れない`};
+  if (dbg.instant) return {can: true, swings: 0};
+  // 掘れるかどうかは、岩ならその岩の硬さ、鉱石ならまわりの母岩の硬さで決まる
+  const gate = isOre[id] ? HARD[HOST_BY_LAYER[world.layer[y * W + x]]] : HARD[id];
+  if (gate > pick) return {can: false, why: `硬くて掘れない（${isOre[id] ? 'まわりの岩' : b.name}の硬さ${gate}、ツルハシ${pick}）`};
+  return {can: true, swings: Math.max(2, Math.min(15, Math.round(5 * HARD[id] / pick)))};
+}
+
+/* ---------- タイルの絵（Phaserのタイルセットとして使う） ---------- */
+const shadeCss = (rgb, f) => `rgb(${Math.min(255, rgb[0] * f) | 0},${Math.min(255, rgb[1] * f) | 0},${Math.min(255, rgb[2] * f) | 0})`;
+const PAL = BLOCKS.map(b => [0.88, 0.94, 1, 1.06].map(f => shadeCss(b.rgb, f)));
+const WALLC = BLOCKS.map(b => shadeCss(b.rgb, .32));       // 掘った跡の奥の壁
+const tileShade = (x, y) => (Math.imul(x, 73856093) ^ Math.imul(y, 19349663)) >>> 0 & 3;
+const NL = 9;  // 地層の数
+const TI = {solid: [], wall: [], ore: [], ladder: [], liq: []};   // タイル番号の表
+function buildTileset(scene) {
+  const draws = [];   // 1タイル＝描く関数
+  const add = fn => { draws.push(fn); return draws.length - 1; };
+  const fill = (c, col) => { c.fillStyle = col; c.fillRect(0, 0, T, T); };
+  for (const b of BLOCKS) TI.solid[b.id] = [0, 1, 2, 3].map(sh => add(c => fill(c, PAL[b.id][sh])));
+  for (let l = 0; l < NL; l++) TI.wall[l] = add(c => fill(c, WALLC[HOST_BY_LAYER[l]]));
+  for (const b of BLOCKS) if (isOre[b.id]) TI.ore[b.id] = [...Array(NL)].map((_, l) => add(c => {
+    fill(c, PAL[HOST_BY_LAYER[l]][2]);
+    c.fillStyle = PAL[b.id][3]; const q = T / 6;
+    c.fillRect(q, q, q * 1.6, q * 1.6); c.fillRect(q * 3.4, q * 2.2, q * 1.6, q * 1.6); c.fillRect(q * 1.6, q * 3.8, q * 1.6, q * 1.4);
+  }));
+  for (let l = 0; l < NL; l++) TI.ladder[l] = add(c => {
+    fill(c, WALLC[HOST_BY_LAYER[l]]); c.fillStyle = PAL[B.LADDER][2];
+    c.fillRect(T * .15, 0, T * .14, T); c.fillRect(T * .71, 0, T * .14, T);
+    c.fillRect(T * .15, T * .2, T * .7, T * .13); c.fillRect(T * .15, T * .68, T * .7, T * .13);
+  });
+  for (const b of BLOCKS) if (b.cat === 'liquid' || b.cat === 'plant') TI.liq[b.id] = [...Array(NL + 1)].map((_, l) => add(c => {
+    if (l < NL) fill(c, WALLC[HOST_BY_LAYER[l]]);   // l === NL は地上（後ろは空）
+    c.globalAlpha = b.cat === 'liquid' ? .75 : .9; fill(c, PAL[b.id][2]); c.globalAlpha = 1;
+  }));
+  // にじみ防止に、タイルのまわりを1pxずつ伸ばして並べる
+  const COLS = 32, ROWS = Math.ceil(draws.length / COLS), S = T + 2;
+  const cv = document.createElement('canvas'); cv.width = COLS * S; cv.height = ROWS * S;
+  const c = cv.getContext('2d'), tmp = document.createElement('canvas'); tmp.width = tmp.height = T;
+  const tc = tmp.getContext('2d');
+  draws.forEach((fn, i) => {
+    tc.clearRect(0, 0, T, T); fn(tc);
+    const ox = (i % COLS) * S + 1, oy = Math.floor(i / COLS) * S + 1;
+    c.drawImage(tmp, 0, 0, T, 1, ox, oy - 1, T, 1); c.drawImage(tmp, 0, T - 1, T, 1, ox, oy + T, T, 1);
+    c.drawImage(tmp, 0, 0, 1, T, ox - 1, oy, 1, T); c.drawImage(tmp, T - 1, 0, 1, T, ox + T, oy, 1, T);
+    c.drawImage(tmp, ox, oy);
+  });
+  if (scene.textures.exists('tiles')) scene.textures.remove('tiles');
+  scene.textures.addCanvas('tiles', cv);
+}
+function tileIndexAt(x, y) {
+  const i = y * W + x, id = blocks[i], l = world.layer[i], under = y > world.surf[x];
+  if (id === B.AIR) return under ? TI.wall[l] : -1;
+  if (id === B.LADDER) return TI.ladder[l];
+  if (isOre[id]) return TI.ore[id][l];
+  const lq = TI.liq[id]; if (lq) return lq[under ? l : NL];
+  return TI.solid[id][tileShade(x, y)];
+}
+
+/* ---------- チャンク：画面の近くだけ Phaser のタイルマップを作る（広い世界でもメモリを食わない） ---------- */
+const CH = 32;
+const chunks = new Map();
+let scene = null, sprite = null, darkImg = null, darkRects = null, ov = null;
+function makeChunk(cx, cy) {
+  const data = [];
+  for (let y = 0; y < CH; y++) { const row = []; const ty = cy * CH + y;
+    for (let x = 0; x < CH; x++) { const tx = cx * CH + x; row.push(tx < W && ty < H ? tileIndexAt(tx, ty) : -1); }
+    data.push(row); }
+  const map = scene.make.tilemap({data, tileWidth: T, tileHeight: T});
+  const ts = map.addTilesetImage('tiles', 'tiles', T, T, 1, 2);
+  const layer = map.createLayer(0, ts, cx * CH * T, cy * CH * T).setDepth(0);
+  chunks.set(cy * 10000 + cx, {map, layer, cx, cy});
+}
+function clearChunks() { for (const c of chunks.values()) c.map.destroy(); chunks.clear(); }
+function updateChunks() {
+  const vw = viewW(), vh = viewH();
+  const x0 = Math.floor((cam.x - vw / 2) / T / CH) - 1, x1 = Math.floor((cam.x + vw / 2) / T / CH) + 1;
+  const y0 = Math.floor((cam.y - vh / 2) / T / CH) - 1, y1 = Math.floor((cam.y + vh / 2) / T / CH) + 1;
+  let made = 0;
+  for (let cy = Math.max(0, y0); cy <= Math.min(Math.ceil(H / CH) - 1, y1); cy++)
+    for (let cx = Math.max(0, x0); cx <= Math.min(Math.ceil(W / CH) - 1, x1); cx++)
+      if (!chunks.has(cy * 10000 + cx) && made < 8) { makeChunk(cx, cy); made++; }
+  for (const [k, c] of chunks) if (c.cx < x0 - 1 || c.cx > x1 + 1 || c.cy < y0 - 1 || c.cy > y1 + 1) { c.map.destroy(); chunks.delete(k); }
+}
+function refreshTile(x, y) {
+  const c = chunks.get(Math.floor(y / CH) * 10000 + Math.floor(x / CH)); if (!c) return;
+  const idx = tileIndexAt(x, y), lx = x - c.cx * CH, ly = y - c.cy * CH;
+  if (idx < 0) c.layer.removeTileAt(lx, ly); else c.layer.putTileAt(idx, lx, ly);
+}
+
+/* ---------- ワールドの用意 ---------- */
+function newWorld(seed, size) {
+  $('loading').hidden = false;
+  setTimeout(() => {
+    world = scaleWorld(generate(seed, size), ...GROW);
+    blocks = world.blocks; W = world.W; H = world.H;
+    const [sx, sy] = world.validation.spawn;
+    player = {x: (sx + .5) * T, y: (sy + 1) * T, vx: 0, vy: 0, ground: false, hp: 100, face: 1, spawn: [sx, sy]};
+    inv = new Map(); selected = -1; mining = null; lastRegion = -1; lastLayer = -1;
+    clearChunks(); buildMap(); updateHotbar(); resize();
+    cam.x = player.x; cam.y = player.y - PLAYER.h / 2;
+    $('seed').value = seed; $('size').value = size;
+    const u = new URL(location.href); u.searchParams.set('seed', seed); u.searchParams.set('size', size); history.replaceState(null, '', u);
+    $('loading').hidden = true;
+    toast(`シード「${seed}」 ${W}×${H} ブロック`);
+  }, 30);
+}
+// ワールドを横 fx 倍・縦 fy 倍に引き伸ばす（いちばん近いマスの値を使う）。PR #28 と同じ
+function scaleWorld(w, fx, fy) {
+  if (fx === 1 && fy === 1) return w;
+  const W0 = w.W, H0 = w.H, W1 = Math.round(W0 * fx), H1 = Math.round(H0 * fy);
+  const sx = new Int32Array(W1), sy = new Int32Array(H1);
+  for (let x = 0; x < W1; x++) sx[x] = Math.min(W0 - 1, Math.floor(x / fx));
+  for (let y = 0; y < H1; y++) sy[y] = Math.min(H0 - 1, Math.floor(y / fy));
+  const grid = (src, Type) => { const out = new Type(W1 * H1); for (let y = 0; y < H1; y++) { const r0 = sy[y] * W0, r1 = y * W1; for (let x = 0; x < W1; x++) out[r1 + x] = src[r0 + sx[x]]; } return out; };
+  const col = (src, Type, f = v => v) => { const out = new Type(W1); for (let x = 0; x < W1; x++) out[x] = f(src[sx[x]]); return out; };
+  const [spx, spy] = w.validation.spawn;
+  return {...w, W: W1, H: H1,
+    blocks: grid(w.blocks, w.blocks.constructor), layer: grid(w.layer, w.layer.constructor), stab: grid(w.stab, w.stab.constructor),
+    regionOf: col(w.regionOf, w.regionOf.constructor),
+    surf: col(w.surf, w.surf.constructor, v => Math.ceil(v * fy)),
+    features: w.features.map(f => ({...f, x: Math.round(f.x * fx), y: Math.round(f.y * fy), r: f.r * Math.max(fx, fy)})),
+    validation: {...w.validation, spawn: [Math.floor((spx + .5) * fx), Math.floor((spy + 1) * fy) - 1]}};
+}
+
+/* ---------- 画面の大きさ（画面の実ピクセルで描く） ---------- */
+const gameW = () => scene ? scene.scale.width : innerWidth * DPR, gameH = () => scene ? scene.scale.height : innerHeight * DPR;
+function resize() {
+  zoom = Math.min(gameW(), gameH()) / (zoomBlocks * T);
+  if (scene) scene.cameras.main.setZoom(zoom);
+}
+const viewW = () => gameW() / zoom, viewH = () => gameH() / zoom;
+
+/* ---------- 物理（PR #28 と同じ。段差の自動上りだけ外した） ---------- */
+function overlapsTile(px, py, test) {
+  const x0 = Math.floor((px - PLAYER.w / 2) / T), x1 = Math.floor((px + PLAYER.w / 2 - .01) / T);
+  const y0 = Math.floor((py - PLAYER.h) / T), y1 = Math.floor((py - .01) / T);
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (test(tileAt(x, y), x, y)) return true;
+  return false;
+}
+const bodyHits = (px, py) => overlapsTile(px, py, id => isSolid[id] === 1);
+
+function step(dt) {
+  const p = player;
+  const inWater = overlapsTile(p.x, p.y - 4, id => id === B.WATER || id === B.REVWATER);
+  const onLadder = overlapsTile(p.x, p.y - 2, id => id === B.LADDER);
+  const inLava = overlapsTile(p.x, p.y - 2, id => id === B.LAVA);
+  const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  if (dir) p.face = dir;
+
+  if (dbg.fly) {   // デバッグ：壁を抜けて飛ぶ
+    const v = (input.up || input.jump ? -1 : 0) + (input.down ? 1 : 0);
+    p.x = Math.max(PLAYER.w, Math.min(W * T - PLAYER.w, p.x + dir * PHYS.fly * dt));
+    p.y = Math.max(PLAYER.h + 1, Math.min(H * T - 1, p.y + v * PHYS.fly * dt));
+    p.vx = p.vy = 0; p.ground = false;
+    return;
+  }
+  // 置いたブロックや移動で体が埋まったら、上へ押し出す
+  for (let k = 0; k < 12 && bodyHits(p.x, p.y); k++) p.y = Math.floor(p.y / T) * T - (k ? T : 0);
+
+  p.vx = dir * (inWater ? PHYS.swim : PHYS.walk);
+  if (onLadder) {
+    p.vy = ((input.down ? 1 : 0) - (input.up || input.jump ? 1 : 0)) * PHYS.climb;
+  } else if (inWater) {
+    p.vy = Math.min(PHYS.waterFall, p.vy + PHYS.waterGravity * dt);
+    if (input.jump || input.up) p.vy = -PHYS.swim * 1.6;
+  } else {
+    p.vy = Math.min(PHYS.maxFall, p.vy + PHYS.gravity * dt);
+    if ((input.jump || input.up) && p.ground) { p.vy = -PHYS.jump; p.ground = false; }
+  }
+  // 横方向：ぶつかったら止まる（段差はジャンプで上る）
+  let nx = p.x + p.vx * dt;
+  if (bodyHits(nx, p.y)) { nx = p.x; p.vx = 0; }
+  p.x = nx;
+  // 縦方向
+  let ny = p.y + p.vy * dt;
+  p.ground = false;
+  if (bodyHits(p.x, ny)) {
+    if (p.vy > 0) { ny = Math.floor(ny / T) * T; p.ground = true; }
+    else { ny = Math.floor((ny - PLAYER.h) / T + 1) * T + PLAYER.h; }
+    if (bodyHits(p.x, ny)) ny = p.y;
+    p.vy = 0;
+  }
+  p.y = ny;
+  if (!p.ground && p.vy === 0 && bodyHits(p.x, p.y + 1)) p.ground = true;
+
+  // 溶岩でダメージ、外にいれば少しずつ回復
+  if (inLava) { p.hp -= 60 * dt; if (Math.random() < dt * 4) toast('熱い！'); }
+  else p.hp = Math.min(100, p.hp + 4 * dt);
+  if (p.hp <= 0) { p.hp = 100; teleport(...p.spawn); toast('倒れた…町で目を覚ました'); }
+}
+function teleport(tx, ty) {
+  player.x = (tx + .5) * T; player.y = (ty + 1) * T; player.vx = player.vy = 0;
+  cam.x = player.x; cam.y = player.y - PLAYER.h / 2;
+}
+
+/* ---------- 掘る・置く ---------- */
+function screenToTile(sx, sy) {
+  const wx = cam.x + (sx * DPR - gameW() / 2) / zoom, wy = cam.y + (sy * DPR - gameH() / 2) / zoom;
+  return [Math.floor(wx / T), Math.floor(wy / T)];
+}
+function inReach(tx, ty) {
+  if (dbg.reach) return true;
+  const dx = (tx + .5) * T - player.x, dy = (ty + .5) * T - (player.y - PLAYER.h / 2);
+  return Math.hypot(dx, dy) <= REACH * T;
+}
+function canPlace(tx, ty) {
+  if (selected < 0 || !(inv.get(selected) > 0)) return false;
+  const id = tileAt(tx, ty);
+  if (isSolid[id] || id === B.LAVA) return false;
+  const px0 = player.x - PLAYER.w / 2, px1 = player.x + PLAYER.w / 2, py0 = player.y - PLAYER.h, py1 = player.y;
+  if (!dbg.fly && tx * T < px1 && (tx + 1) * T > px0 && ty * T < py1 && (ty + 1) * T > py0) return false;
+  return true;
+}
+function setTile(x, y, id) {
+  blocks[y * W + x] = id;
+  refreshTile(x, y);
+  if (mapData) { const rgb = id ? BLOCKS[id].rgb : (y > world.surf[x] ? [20, 16, 18] : [27, 38, 51]); const o = (y * W + x) * 4; mapData.data[o] = rgb[0]; mapData.data[o + 1] = rgb[1]; mapData.data[o + 2] = rgb[2]; mapDirty = true; }
+}
+function useTool(dt) {
+  if (!pointer) { mining = null; return; }
+  const [tx, ty] = screenToTile(pointer.sx, pointer.sy);
+  if (tx < 0 || ty < 0 || tx >= W || ty >= H) { mining = null; return; }
+  if (!inReach(tx, ty)) { mining = null; return; }
+  if (mode === 'place') {
+    if (pointer.fresh && canPlace(tx, ty)) {
+      setTile(tx, ty, selected); inv.set(selected, inv.get(selected) - 1);
+      if (inv.get(selected) <= 0) { inv.delete(selected); selected = [...inv.keys()][0] ?? -1; }
+      updateHotbar();
+    }
+    pointer.fresh = false;
+    return;
+  }
+  const id = tileAt(tx, ty);
+  if (!id) { mining = null; return; }
+  const info = digInfo(tx, ty);
+  if (!info.can) { if (pointer.fresh) toast(info.why); pointer.fresh = false; mining = null; return; }
+  pointer.fresh = false;
+  if (!mining || mining.x !== tx || mining.y !== ty) mining = {x: tx, y: ty, t: 0, swings: info.swings};
+  mining.t += dt;
+  if (mining.t >= mining.swings * SWING) {
+    setTile(tx, ty, B.AIR);
+    inv.set(id, (inv.get(id) || 0) + 1);
+    if (selected < 0) selected = id;
+    if (isOre[id] && inv.get(id) === 1) toast(`${BLOCKS[id].name}を見つけた！`);
+    updateHotbar();
+    mining = null;
+  }
+}
+
+/* ---------- 持ち物（ホットバー） ---------- */
+function updateHotbar() {
+  const bar = $('hotbar');
+  bar.innerHTML = '';
+  const items = [...inv.entries()].sort((a, b) => (isOre[b[0]] - isOre[a[0]]) || b[1] - a[1]);
+  for (const [id, n] of items.slice(0, 8)) {
+    const el = document.createElement('button');
+    el.className = 'slot' + (id === selected ? ' sel' : '');
+    el.innerHTML = `<i style="background:${BLOCKS[id].color}"></i><b>${n}</b>`;
+    el.title = BLOCKS[id].name;
+    el.onclick = () => { selected = id; setMode('place'); updateHotbar(); toast(`${BLOCKS[id].name}を置く`); };
+    bar.appendChild(el);
+  }
+  const ores = items.filter(([id]) => isOre[id]).length;
+  $('invCount').textContent = items.length ? `${items.length}種（鉱石${ores}種）` : '';
+}
+function setMode(m) {
+  mode = m;
+  $('modeBtn').textContent = m === 'dig' ? '⛏' : '🧱';
+  $('modeBtn').classList.toggle('place', m === 'place');
+}
+
+/* ---------- 表示 ---------- */
+function toast(msg) {
+  const el = $('toast'); el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+function regionName(x) {
+  const r = REGIONS[world.regionOf[Math.max(0, Math.min(W - 1, x))]];
+  return r ? r.name : '?';
+}
+function featureAt(tx, ty) {
+  let best = null, bd = Infinity;
+  for (const f of world.features) { const d = Math.hypot(f.x - tx, f.y - ty); if (d <= f.r + 2 && d < bd) { bd = d; best = f; } }
+  if (!best) return '';
+  if (best.kind === 'pocket') return POCKETS[best.type]?.name || best.type;
+  if (best.kind === 'town') return '鉱山町';
+  return STRUCTS[best.kind]?.name || best.kind;
+}
+
+// 毎フレーム：カメラ・主人公・暗さ・ねらっているマスなどを Phaser のオブジェクトに反映する
+function draw() {
+  const c = scene.cameras.main;
+  c.centerOn(cam.x, cam.y);
+  updateChunks();
+  const p = player;
+  sprite.setPosition(Math.round(p.x), Math.round(p.y)).setFlipX(p.face < 0);
+
+  // 暗さ：地表から深いほど暗く、自分のまわりだけ明るい
+  const ptx = Math.floor(p.x / T), depth = Math.floor(p.y / T) - world.surf[Math.max(0, Math.min(W - 1, ptx))];
+  const dark = !dbg.light && depth > 10;
+  darkImg.setVisible(dark); darkRects.clear();
+  if (dark) {
+    const a = Math.min(.9, (depth - 10) / 40 + .35), R = PLAYER.h * 4.5, cx = p.x, cy = p.y - PLAYER.h / 2;
+    darkImg.setPosition(cx, cy).setDisplaySize(R * 2, R * 2).setAlpha(a);
+    const vw = viewW(), vh = viewH(), L = cam.x - vw / 2 - T, Tp = cam.y - vh / 2 - T, Wd = vw + 2 * T, Hd = vh + 2 * T;
+    darkRects.fillStyle(0x000000, a);
+    darkRects.fillRect(L, Tp, Wd, Math.max(0, cy - R - Tp));
+    darkRects.fillRect(L, cy + R, Wd, Math.max(0, Tp + Hd - cy - R));
+    darkRects.fillRect(L, cy - R, Math.max(0, cx - R - L), R * 2);
+    darkRects.fillRect(cx + R, cy - R, Math.max(0, L + Wd - cx - R), R * 2);
+  }
+
+  ov.clear();
+  const tx0 = Math.floor((cam.x - viewW() / 2) / T), ty0 = Math.floor((cam.y - viewH() / 2) / T);
+  const tx1 = Math.ceil((cam.x + viewW() / 2) / T), ty1 = Math.ceil((cam.y + viewH() / 2) / T);
+  const lw = 1.5 / zoom * DPR;
+  if (dbg.xray) {
+    for (let y = Math.max(0, ty0); y < Math.min(H, ty1); y++) for (let x = Math.max(0, tx0); x < Math.min(W, tx1); x++) {
+      const id = blocks[y * W + x]; if (!isOre[id]) continue;
+      ov.lineStyle(lw * 1.5, Phaser.Display.Color.HexStringToColor(BLOCKS[id].color).color, 1).strokeRect(x * T + 1, y * T + 1, T - 2, T - 2);
+    }
+  }
+  if (dbg.grid) {
+    ov.lineStyle(1 / zoom, 0xffffff, .12);
+    for (let x = tx0; x <= tx1; x++) ov.lineBetween(x * T, ty0 * T, x * T, ty1 * T);
+    for (let y = ty0; y <= ty1; y++) ov.lineBetween(tx0 * T, y * T, tx1 * T, y * T);
+  }
+  // ねらっているブロックと掘る進み具合（1振りごとに進む）
+  if (pointer) {
+    const [tx, ty] = screenToTile(pointer.sx, pointer.sy);
+    const ok = inReach(tx, ty);
+    ov.lineStyle(lw, ok ? (mode === 'place' ? 0x8fd0ff : 0xffffff) : 0xff5a5a, ok ? 1 : .8).strokeRect(tx * T + .5, ty * T + .5, T - 1, T - 1);
+    if (mining && mining.swings > 0) {
+      const f = Math.min(1, Math.floor(mining.t / SWING) / mining.swings);
+      ov.fillStyle(0x000000, .45).fillRect(mining.x * T, mining.y * T + T * (1 - f), T, T * f);
+    }
+  }
+  if (dbg.map) drawMap();
+}
+
+/* ---------- 地図（デバッグ） ---------- */
+function buildMap() {
+  mapImg = document.createElement('canvas'); mapImg.width = W; mapImg.height = H;
+  mapCtx = mapImg.getContext('2d'); mapData = mapCtx.createImageData(W, H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const id = blocks[y * W + x], o = (y * W + x) * 4;
+    const rgb = id ? BLOCKS[id].rgb : (y > world.surf[x] ? [20, 16, 18] : [27, 38, 51]);
+    mapData.data[o] = rgb[0]; mapData.data[o + 1] = rgb[1]; mapData.data[o + 2] = rgb[2]; mapData.data[o + 3] = 255;
+  }
+  mapCtx.putImageData(mapData, 0, 0);
+}
+function mapRect() {
+  const pad = 10, maxW = innerWidth - pad * 2, maxH = innerHeight * .62;
+  const k = Math.min(maxW / W, maxH / H);
+  return {x: (innerWidth - W * k) / 2, y: 60, k, w: W * k, h: H * k};
+}
+function drawMap() {
+  if (mapDirty) { mapCtx.putImageData(mapData, 0, 0); mapDirty = false; }
+  const r = mapRect(), cv = $('mapCv');
+  Object.assign(cv.style, {left: r.x - 4 + 'px', top: r.y - 4 + 'px', width: r.w + 'px', height: r.h + 'px'});
+  Object.assign($('mapNote').style, {left: r.x + 'px', top: r.y + r.h + 8 + 'px'});
+  const pw = Math.round(r.w * DPR), ph = Math.round(r.h * DPR);
+  if (cv.width !== pw || cv.height !== ph) { cv.width = pw; cv.height = ph; }
+  const c = cv.getContext('2d'), k = pw / W;
+  c.imageSmoothingEnabled = false; c.drawImage(mapImg, 0, 0, pw, ph);
+  c.strokeStyle = '#fff'; c.lineWidth = DPR;
+  c.strokeRect((cam.x - viewW() / 2) / T * k, (cam.y - viewH() / 2) / T * k, viewW() / T * k, viewH() / T * k);
+  c.fillStyle = '#ff3f5f'; c.beginPath(); c.arc(player.x / T * k, player.y / T * k, 4 * DPR, 0, 7); c.fill();
+}
+
+/* ---------- 画面上の文字 ---------- */
+function hud() {
+  const p = player, tx = Math.floor(p.x / T), ty = Math.floor((p.y - 1) / T);
+  const region = world.regionOf[Math.max(0, Math.min(W - 1, tx))];
+  const layer = world.layer[Math.max(0, Math.min(H - 1, ty)) * W + Math.max(0, Math.min(W - 1, tx))];
+  const depth = ty - world.surf[Math.max(0, Math.min(W - 1, tx))];
+  if (region !== lastRegion) { if (lastRegion >= 0) toast(`― ${REGIONS[region].name} ―`); lastRegion = region; }
+  if (layer !== lastLayer) { if (lastLayer >= 0 && layer > 0) toast(`地層：${STRATA[layer].name}`); lastLayer = layer; }
+  $('where').textContent = `${REGIONS[region].name}　${depth > 0 ? `地下 ${depth}` : '地上'}　ツルハシ ${pick}`;
+  $('hp').style.width = Math.max(0, p.hp) + '%';
+  if (!dbg.on) return;
+  let under = '';
+  if (pointer) {
+    const [mx, my] = screenToTile(pointer.sx, pointer.sy);
+    if (mx >= 0 && my >= 0 && mx < W && my < H) {
+      const id = tileAt(mx, my), i = my * W + mx, info = digInfo(mx, my);
+      under = `\n指す (${mx},${my}) ${BLOCKS[id].name} 硬さ${HARD[id]} ${info.can ? info.swings + '振り' : '掘れない'}\n　地域 ${regionName(mx)} / 地層 ${STRATA[world.layer[i]].name}\n　崩れやすさ ${world.stab[i]} ${featureAt(mx, my) ? '/ ' + featureAt(mx, my) : ''}`;
+    }
+  }
+  $('dbgText').textContent =
+    `Phaser ${Phaser.VERSION}  FPS ${fps}  ${W}×${H}  seed ${world.seed}\n` +
+    `自分 (${tx},${ty}) 地表から ${depth}  タイルの塊 ${chunks.size}\n` +
+    `地層 ${STRATA[layer].name}${featureAt(tx, ty) ? '\n場所 ' + featureAt(tx, ty) : ''}\n` +
+    `速さ ${p.vx | 0},${p.vy | 0} ${p.ground ? '接地' : ''}` + under;
+}
+
+/* ---------- Phaser のシーン ---------- */
+class Main extends Phaser.Scene {
+  create() {
+    scene = this;
+    buildTileset(this);
+    this.cameras.main.setBackgroundColor('#8fb8d8');
+    // 主人公：幅1.5ブロック×高さ3ブロック弱。ヘルメットとランプは PR #28 の絵から
+    const gr = this.add.graphics(), w = PLAYER.w, h = PLAYER.h + 2;
+    gr.fillStyle(0xe0a020).fillRect(5, 0, 17, 4);            // ヘルメット
+    gr.fillStyle(0xfff6b0).fillRect(20, 1, 4, 3);            // ランプ
+    gr.fillStyle(0xf0c8a0).fillRect(7, 4, 13, 10);           // 顔
+    gr.fillStyle(0x111111).fillRect(16, 7, 2, 3);            // 目
+    gr.fillStyle(0x2f3a56).fillRect(3, 14, 21, 20);          // 胴
+    gr.fillStyle(0x6b4a2a).fillRect(3, 30, 21, 3);           // ベルト
+    gr.fillStyle(0x24324a).fillRect(5, 34, 7, 16).fillRect(15, 34, 7, 16);   // 脚
+    gr.fillStyle(0x3b2a1c).fillRect(4, 50, 8, 4).fillRect(15, 50, 8, 4);     // 靴
+    gr.generateTexture('hero', w, h); gr.destroy();
+    sprite = this.add.image(0, 0, 'hero').setOrigin(.5, 1).setDepth(20);
+    // 暗さ：中心が透明で外が黒い丸い絵を、主人公のまわりに置く
+    const dc = document.createElement('canvas'); dc.width = dc.height = 256;
+    const dx = dc.getContext('2d'), rg = dx.createRadialGradient(128, 128, 128 * 1.4 / 4.5, 128, 128, 128);
+    rg.addColorStop(0, 'rgba(0,0,0,0)'); rg.addColorStop(1, 'rgba(0,0,0,1)');
+    dx.fillStyle = rg; dx.fillRect(0, 0, 256, 256);
+    this.textures.addCanvas('dark', dc);
+    darkImg = this.add.image(0, 0, 'dark').setDepth(10).setVisible(false);
+    darkRects = this.add.graphics().setDepth(10);
+    ov = this.add.graphics().setDepth(30);
+    resize();
+    bindPointer(this.game.canvas);
+    newWorld(params.get('seed') || 'komorebi', SIZES[params.get('size')] ? params.get('size') : 'play');
+  }
+  update(time, dtMs) {
+    const dt = Math.min(.05, dtMs / 1000);
+    fpsAcc += dt; fpsN++; if (fpsAcc >= .5) { fps = Math.round(fpsN / fpsAcc); fpsAcc = 0; fpsN = 0; }
+    if (!world || !player) return;
+    const n = Math.ceil(dt / (1 / 120)); for (let i = 0; i < n; i++) step(dt / n);
+    useTool(dt);
+    // カメラは少し遅れて追いかける
+    const vw = viewW(), vh = viewH();
+    cam.x += (player.x - cam.x) * Math.min(1, dt * 8); cam.y += (player.y - PLAYER.h / 2 - cam.y) * Math.min(1, dt * 8);
+    cam.x = W * T > vw ? Math.max(vw / 2, Math.min(W * T - vw / 2, cam.x)) : W * T / 2;
+    cam.y = H * T > vh ? Math.max(vh / 2, Math.min(H * T - vh / 2, cam.y)) : H * T / 2;
+    draw(); hud();
+  }
+}
+
+/* ---------- 操作：キーボード ---------- */
+const KEYS = {ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', Space: 'jump'};
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (KEYS[e.code]) { input[KEYS[e.code]] = true; e.preventDefault(); }
+  if (e.code === 'KeyE') setMode(mode === 'dig' ? 'place' : 'dig');
+  if (e.code === 'Backquote' || e.code === 'F3') { toggleDebug(); e.preventDefault(); }
+  if (e.code === 'KeyM' && dbg.on) setDbg('map', !dbg.map);
+  if (e.code === 'KeyF' && dbg.on) setDbg('fly', !dbg.fly);
+  if (/^Digit[1-8]$/.test(e.code)) { const b = $('hotbar').children[+e.code.slice(5) - 1]; if (b) b.click(); }
+});
+addEventListener('keyup', e => { if (KEYS[e.code]) input[KEYS[e.code]] = false; });
+addEventListener('blur', () => { for (const k in input) input[k] = false; pointer = null; });
+
+/* ---------- 操作：画面（タップ・長押しで掘る、マウスも同じ） ---------- */
+function bindPointer(canvas) {
+  canvas.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    if (dbg.map) { setDbg('map', false); return; }   // 地図の外をタップしたら閉じる
+    if (e.button === 2) setMode('place');
+    canvas.setPointerCapture(e.pointerId);
+    pointer = {sx: e.clientX, sy: e.clientY, id: e.pointerId, fresh: true, button: e.button};
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (pointer && pointer.id === e.pointerId) { pointer.sx = e.clientX; pointer.sy = e.clientY; if (mode === 'place') pointer.fresh = true; }
+  });
+  const endPointer = e => { if (pointer && pointer.id === e.pointerId) { if (pointer.button === 2) setMode('dig'); pointer = null; mining = null; } };
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+}
+$('mapCv').addEventListener('pointerdown', e => {   // 地図をタップしたらそこへ移動
+  e.preventDefault();
+  const r = e.currentTarget.getBoundingClientRect();
+  const tx = Math.floor((e.clientX - r.left) / r.width * W); let ty = Math.floor((e.clientY - r.top) / r.height * H);
+  if (!dbg.fly) { while (ty > 6 && bodyHits((tx + .5) * T, (ty + 1) * T)) ty--; }
+  teleport(tx, ty); setDbg('map', false);
+});
+
+/* ---------- 操作：画面のボタン（複数の指で同時に押せる） ---------- */
+for (const el of document.querySelectorAll('[data-key]')) {
+  const k = el.dataset.key;
+  const on = e => { e.preventDefault(); el.setPointerCapture(e.pointerId); input[k] = true; el.classList.add('down'); };
+  const off = e => { input[k] = false; el.classList.remove('down'); };
+  el.addEventListener('pointerdown', on);
+  el.addEventListener('pointerup', off); el.addEventListener('pointercancel', off); el.addEventListener('lostpointercapture', off);
+}
+$('modeBtn').addEventListener('click', () => setMode(mode === 'dig' ? 'place' : 'dig'));
+
+/* ---------- デバッグ ---------- */
+function toggleDebug(force) {
+  const panel = document.body.classList.contains('panel');
+  if (force === true || !dbg.on) { dbg.on = true; document.body.classList.add('panel'); }
+  else if (panel && force === undefined) { document.body.classList.remove('panel'); toast('パネルを隠した（もう一度 🐞 でデバッグをやめる）'); }
+  else { dbg.on = false; document.body.classList.remove('panel'); for (const k of ['fly', 'map']) setDbg(k, false); }
+  document.body.classList.toggle('debug', dbg.on);
+}
+function setDbg(k, v) {
+  dbg[k] = v;
+  const el = document.querySelector(`[data-dbg="${k}"]`); if (el) el.classList.toggle('on', v);
+  document.body.classList.toggle('fly', dbg.fly);
+  document.body.classList.toggle('mapopen', dbg.map);
+}
+function setPick(v) {
+  pick = v; mining = null;
+  for (const el of document.querySelectorAll('[data-pick]')) el.classList.toggle('on', +el.dataset.pick === v);
+}
+for (const el of document.querySelectorAll('[data-dbg]')) el.addEventListener('click', () => setDbg(el.dataset.dbg, !dbg[el.dataset.dbg]));
+for (const el of document.querySelectorAll('[data-pick]')) el.addEventListener('click', () => { setPick(+el.dataset.pick); toast(`ツルハシの硬さ ${pick}`); });
+$('dbgBtn').addEventListener('click', () => toggleDebug());
+$('toTown').addEventListener('click', () => teleport(...player.spawn));
+$('zoomIn').addEventListener('click', () => { zoomBlocks = Math.max(8, zoomBlocks - 4); resize(); });
+$('zoomOut').addEventListener('click', () => { zoomBlocks = Math.min(120, zoomBlocks + 6); resize(); });
+$('regen').addEventListener('click', () => newWorld($('seed').value.trim() || 'komorebi', $('size').value));
+$('randSeed').addEventListener('click', () => newWorld(Math.random().toString(36).slice(2, 8), $('size').value));
+$('giveOres').addEventListener('click', () => { for (const b of BLOCKS) if (b.cat === 'ore') inv.set(b.id, (inv.get(b.id) || 0) + 10); updateHotbar(); toast('鉱石を10個ずつ足した'); });
+
+document.addEventListener('gesturestart', e => e.preventDefault());   // iOS のピンチ拡大を止める
+if (params.get('debug') === '1') toggleDebug(true);
+setMode('dig'); setPick(pick);
+$('helpOk').addEventListener('click', () => { $('help').hidden = true; });
+addEventListener('touchstart', () => document.body.classList.add('touch'), {once: true, passive: true});
+if (params.get('touch') === '1') document.body.classList.add('touch');
+if (params.get('help') === '0') $('help').hidden = true;
+
+window.game = new Phaser.Game({
+  type: Phaser.AUTO,
+  parent: 'game',
+  pixelArt: true,
+  backgroundColor: '#000000',
+  // 画面の実ピクセルで描く（スマホでもにじまない）。CSS上は 1/dpr に縮めて表示
+  scale: {mode: Phaser.Scale.NONE, width: innerWidth * DPR, height: innerHeight * DPR, zoom: 1 / DPR},
+  scene: Main,
+});
+let rt = 0;
+addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { game.scale.resize(innerWidth * DPR, innerHeight * DPR); game.scale.setZoom(1 / DPR); resize(); }, 100); });
+</script>
+</body>
+</html>
