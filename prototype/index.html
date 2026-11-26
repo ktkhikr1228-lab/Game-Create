@@ -58,7 +58,8 @@ async function main() {
     `版 <b>${sha.slice(0, 7)}</b>（${fmt(commit.commit.committer.date)} 更新）<br>${msg.replace(/[<&]/g, c => ({'<': '&lt;', '&': '&amp;'})[c])}` +
     (branch !== BRANCHES[0] ? `<br>（${branch} の版）` : '');
   const html = files.filter(f => f.name.endsWith('.html') && f.name !== 'index.html');
-  html.sort((a, b) => ((INFO[a.name] || [, , 3])[2] - (INFO[b.name] || [, , 3])[2]) || a.name.localeCompare(b.name));
+  const order = n => { const i = Object.keys(INFO).indexOf(n); return i < 0 ? 99 : i; };
+  html.sort((a, b) => order(a.name) - order(b.name) || a.name.localeCompare(b.name));
   const list = document.getElementById('list');
   let group = 0;
   for (const f of html) {
