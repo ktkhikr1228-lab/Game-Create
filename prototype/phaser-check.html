@@ -39,12 +39,13 @@
 const Q = new URLSearchParams(location.search);
 // ---- 決定済みの数字（docs/design.md §8） ----
 const T = 18;              // 1ブロック 18px
-const PW = 2, PH = 3;      // 主人公は横2×縦3ブロック
+const PW = 2, PH = 3;      // 主人公は横2×縦3ブロック（の枠）
+const HERO_W = 22;         // 見た目と当たり判定の幅 px（この試作の仮の数字）
 const JUMP_BLOCKS = 4;     // ジャンプで4ブロックの段差まで
 // ---- この試作だけの仮の数字 ----
 const W = 240, H = 140;    // ワールドの広さ（ブロック）
 const GRAV = 1500, SPEED = 170, REACH = 5;
-const VIEW_BLOCKS = +(Q.get('zoom') || 15);  // 画面の短い辺に映るブロック数（?zoom=で変えられる）
+const VIEW_BLOCKS = +(Q.get('zoom') || 26);  // 画面の短い辺に映るブロック数（?zoom=で変えられる）
 
 const touch = Q.has('touch') ? Q.get('touch') === '1' : (matchMedia('(pointer:coarse)').matches || 'ontouchstart' in window);
 if (touch) document.body.classList.add('touch');
@@ -142,16 +143,20 @@ class Main extends Phaser.Scene {
     this.cameras.main.setBackgroundColor('#8fb8d8');
     const under = this.add.rectangle(0, 40*T, W*T, (H-40)*T, 0x1c1916).setOrigin(0).setDepth(-1);
 
-    // 主人公 2×3ブロック。当たり判定は幅2ブロックの通路を通れるよう少しだけ細く
-    const g = this.add.graphics();
-    g.fillStyle(0x2f4f7a).fillRect(0, 0, PW*T, PH*T);
-    g.fillStyle(0xe8c9a0).fillRect(6, 4, PW*T-12, 16);
-    g.fillStyle(0x111111).fillRect(PW*T-14, 9, 3, 4);
-    g.fillStyle(0x5a3a20).fillRect(4, PH*T-10, PW*T-8, 10);
-    g.generateTexture('hero', PW*T, PH*T); g.destroy();
+    // 主人公。2×3ブロックの枠に収まる人の形にする（Terrariaと同じく、見た目と当たり判定は枠より細い）
+    // 当たり判定は幅 HERO_W px（1ブロックより太いので、幅1の穴は通れない）
+    const g = this.add.graphics(), cw = HERO_W, ch = PH*T;
+    g.fillStyle(0xe8c9a0).fillRect(5, 1, 12, 12);            // 頭
+    g.fillStyle(0x3b2a1c).fillRect(4, 0, 14, 4);             // 髪
+    g.fillStyle(0x111111).fillRect(13, 6, 2, 3);             // 目
+    g.fillStyle(0x2f4f7a).fillRect(3, 14, 16, 20);           // 胴
+    g.fillStyle(0x6b4a2a).fillRect(3, 30, 16, 3);            // ベルト
+    g.fillStyle(0x24324a).fillRect(4, 34, 6, 16).fillRect(12, 34, 6, 16); // 脚
+    g.fillStyle(0x3b2a1c).fillRect(3, 50, 7, 4).fillRect(12, 50, 7, 4);   // 靴
+    g.generateTexture('hero', cw, ch); g.destroy();
     const sx = 30;
     player = this.physics.add.sprite(sx*T + T, (world.surf[sx]-PH)*T, 'hero').setOrigin(0.5, 0);
-    player.body.setSize(PW*T - 2, PH*T - 1).setOffset(1, 1);
+    player.body.setSize(HERO_W, PH*T - 2).setOffset(0, 2);
     player.body.setMaxVelocity(SPEED, 900);
     this.physics.add.collider(player, layer);
     this.physics.world.setBounds(0, 0, W*T, H*T);
@@ -163,7 +168,7 @@ class Main extends Phaser.Scene {
     const cam = this.cameras.main;
     cam.setBounds(0, 0, W*T, H*T);
     cam.startFollow(player, true, 0.15, 0.15, 0, -PH*T/2);
-    const fit = () => { const s = Math.min(this.scale.width, this.scale.height); cam.setZoom(Math.max(1, s / (VIEW_BLOCKS*T))); };
+    const fit = () => { const s = Math.min(this.scale.width, this.scale.height); cam.setZoom(s / (VIEW_BLOCKS*T)); };
     fit(); this.scale.on('resize', fit);
 
     // キー
@@ -185,19 +190,6 @@ class Main extends Phaser.Scene {
     if (left !== right) player.setFlipX(left);
     const onFloor = b.blocked.down;
     if (jump && onFloor) b.setVelocityY(-Math.sqrt(2*GRAV*(JUMP_BLOCKS*T + 6)));
-    // 1段の段差は自動で上る
-    if (onFloor && (left !== right)) {
-      const dir = left ? -1 : 1;
-      if (dir < 0 ? b.blocked.left : b.blocked.right) {
-        const fx = Math.floor((dir < 0 ? b.left - 1 : b.right + 1) / T);
-        const footY = Math.floor((b.bottom - 1) / T);
-        // 前の列は足元だけ埋まっていて、その上に背の高さぶんの空き。頭の上も1段空いている
-        let free = true;
-        for (let i = 1; i <= PH; i++) free = free && !solid(fx, footY - i);
-        for (let x = Math.floor(b.left / T); x <= Math.floor((b.right - 1) / T); x++) free = free && !solid(x, footY - PH);
-        if (solid(fx, footY) && free) { player.y -= T; b.updateFromGameObject(); b.setVelocityX(dir*SPEED); }
-      }
-    }
 
     // 掘る
     const p = this.input.activePointer;
@@ -256,16 +248,20 @@ for (const [id, key] of [['bL','L'],['bR','R'],['bJ','J']]) {
 }
 document.getElementById('bM').addEventListener('pointerdown', e => { e.preventDefault(); setMode(mode === 'dig' ? 'place' : 'dig'); });
 
+const DPR = Math.min(3, window.devicePixelRatio || 1);
 window.game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
   pixelArt: true,
   backgroundColor: '#0d0f12',
-  scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%' },
+  // 画面の実ピクセルで描く（スマホでもにじまない）。CSS上は 1/dpr に縮めて表示
+  scale: { mode: Phaser.Scale.NONE, width: innerWidth*DPR, height: innerHeight*DPR, zoom: 1/DPR },
   physics: { default: 'arcade', arcade: { gravity: { y: GRAV }, tileBias: 20 } },
   input: { activePointers: 4 },
   scene: Main,
 });
+let rt = 0;
+addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { game.scale.resize(innerWidth*DPR, innerHeight*DPR); game.scale.setZoom(1/DPR); }, 100); });
 </script>
 </body>
 </html>
