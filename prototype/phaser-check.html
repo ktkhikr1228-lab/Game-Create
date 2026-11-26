@@ -40,7 +40,7 @@ const Q = new URLSearchParams(location.search);
 // ---- 決定済みの数字（docs/design.md §8） ----
 const T = 18;              // 1ブロック 18px
 const PW = 2, PH = 3;      // 主人公は横2×縦3ブロック（の枠）
-const HERO_W = 22;         // 見た目と当たり判定の幅 px（この試作の仮の数字）
+const HERO_W = 27;         // 見た目と当たり判定の幅 px（1.5ブロック）
 const JUMP_BLOCKS = 4;     // ジャンプで4ブロックの段差まで
 // ---- この試作だけの仮の数字 ----
 const W = 240, H = 140;    // ワールドの広さ（ブロック）
@@ -146,13 +146,13 @@ class Main extends Phaser.Scene {
     // 主人公。2×3ブロックの枠に収まる人の形にする（Terrariaと同じく、見た目と当たり判定は枠より細い）
     // 当たり判定は幅 HERO_W px（1ブロックより太いので、幅1の穴は通れない）
     const g = this.add.graphics(), cw = HERO_W, ch = PH*T;
-    g.fillStyle(0xe8c9a0).fillRect(5, 1, 12, 12);            // 頭
-    g.fillStyle(0x3b2a1c).fillRect(4, 0, 14, 4);             // 髪
-    g.fillStyle(0x111111).fillRect(13, 6, 2, 3);             // 目
-    g.fillStyle(0x2f4f7a).fillRect(3, 14, 16, 20);           // 胴
-    g.fillStyle(0x6b4a2a).fillRect(3, 30, 16, 3);            // ベルト
-    g.fillStyle(0x24324a).fillRect(4, 34, 6, 16).fillRect(12, 34, 6, 16); // 脚
-    g.fillStyle(0x3b2a1c).fillRect(3, 50, 7, 4).fillRect(12, 50, 7, 4);   // 靴
+    g.fillStyle(0xe8c9a0).fillRect(7, 1, 13, 12);            // 頭
+    g.fillStyle(0x3b2a1c).fillRect(6, 0, 15, 4);             // 髪
+    g.fillStyle(0x111111).fillRect(16, 6, 2, 3);             // 目
+    g.fillStyle(0x2f4f7a).fillRect(3, 14, 21, 20);           // 胴
+    g.fillStyle(0x6b4a2a).fillRect(3, 30, 21, 3);            // ベルト
+    g.fillStyle(0x24324a).fillRect(5, 34, 7, 16).fillRect(15, 34, 7, 16); // 脚
+    g.fillStyle(0x3b2a1c).fillRect(4, 50, 8, 4).fillRect(15, 50, 8, 4);   // 靴
     g.generateTexture('hero', cw, ch); g.destroy();
     const sx = 30;
     player = this.physics.add.sprite(sx*T + T, (world.surf[sx]-PH)*T, 'hero').setOrigin(0.5, 0);
