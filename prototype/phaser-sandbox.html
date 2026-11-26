@@ -28,9 +28,17 @@
   #hp { height: 100%; width: 100%; background: #e05050; transition: width .2s; }
   #hotbar { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; pointer-events: auto; max-width: 70vw; }
   .slot { position: relative; width: 34px; height: 34px; padding: 0; border: 2px solid rgba(255,255,255,.25); border-radius: 6px; background: rgba(0,0,0,.45); }
-  .slot.sel { border-color: #ffd34a; }
+  .slot.sel { border: 3px solid #ffd34a; box-shadow: 0 0 0 2px rgba(0,0,0,.6), 0 0 10px #ffd34a; background: rgba(80,60,0,.6); }
   .slot i { position: absolute; inset: 6px; border-radius: 3px; }
   .slot b { position: absolute; right: 2px; bottom: 0; font-size: 10px; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  #digTip { position: fixed; display: none; transform: translate(-50%, -100%); background: rgba(0,0,0,.7); padding: 2px 8px; border-radius: 8px;
+    font-size: 12px; white-space: nowrap; pointer-events: none; z-index: 4; }
+  #digTip.bad { color: #ffb0a0; }
+  #keys { position: fixed; left: calc(env(safe-area-inset-left) + 8px); bottom: calc(env(safe-area-inset-bottom) + 8px); font-size: 11px; opacity: .75;
+    text-shadow: 0 1px 2px #000, 0 0 3px #000; pointer-events: none; white-space: pre-line; }
+  body.touch #keys { bottom: calc(env(safe-area-inset-bottom) + 92px); }
+  @media (pointer: coarse) { #keys { bottom: calc(env(safe-area-inset-bottom) + 92px); } }
+  body.debug #keys { display: none; }
   #invCount { font-size: 11px; opacity: .7; margin-top: 2px; text-shadow: 0 1px 2px #000; }
   #dbgBtn { pointer-events: auto; width: 38px; height: 38px; border-radius: 10px; border: 1px solid rgba(255,255,255,.3); background: rgba(0,0,0,.45); font-size: 18px; }
   body.debug #dbgBtn { background: #6a3fa0; }
@@ -97,6 +105,8 @@
   <button id="dbgBtn" title="デバッグ（` キー）">🐞</button>
 </div>
 <div id="toast"></div>
+<div id="digTip"></div>
+<div id="keys"></div>
 
 <div id="controls">
   <div class="cluster">
@@ -158,6 +168,7 @@
       <li>⛏ を押すと 🧱（置く）に切り替わる。置くブロックは上の持ち物から選ぶ</li>
       <li><b>PC</b>：A D / ← → で移動、W・Space でジャンプ、S で下、マウス長押しで掘る、右クリックで置く、E で切り替え、` でデバッグ</li>
       <li>段差はジャンプで上る（4ブロックまで）</li>
+      <li><b>真下に掘る</b>：S か ▼ を押しっぱなし（体の幅2列ぶん掘って下りる）。長押しで掘っているときも、掘れたら同じ向きの次のブロックへ進む</li>
       <li>🐞 でデバッグ（ツルハシの硬さ・飛ぶ・地図で移動・鉱石の透視など）。もう一度押すとパネルだけ隠れる</li>
     </ul>
     <button id="helpOk">はじめる</button>
@@ -1021,6 +1032,14 @@ function step(dt) {
   p.vx = dir * (inWater ? PHYS.swim : PHYS.walk);
   if (onLadder) {
     p.vy = ((input.down ? 1 : 0) - (input.up || input.jump ? 1 : 0)) * PHYS.climb;
+    // 体の幅（1.5ブロック）が1列のはしごからはみ出して引っかからないよう、上り下りの間ははしごの列へ寄せる
+    if (p.vy && !dir) {
+      const y0 = Math.floor((p.y - PLAYER.h) / T), y1 = Math.floor((p.y - .01) / T), cols = new Set();
+      for (let y = y0; y <= y1; y++) for (let x = Math.floor((p.x - PLAYER.w / 2) / T); x <= Math.floor((p.x + PLAYER.w / 2 - .01) / T); x++) if (tileAt(x, y) === B.LADDER) cols.add(x);
+      let best = null;
+      for (const lx of cols) { const c = (lx + .5) * T; for (const off of [0, -4.5, 4.5, -9, 9]) { const nx = c + off; if (!bodyHits(nx, p.y + p.vy * .02) && (best === null || Math.abs(nx - p.x) < Math.abs(best - p.x))) best = nx; } }
+      if (best !== null) p.x += Math.sign(best - p.x) * Math.min(Math.abs(best - p.x), PHYS.walk * dt);
+    }
   } else if (inWater) {
     p.vy = Math.min(PHYS.waterFall, p.vy + PHYS.waterGravity * dt);
     if (input.jump || input.up) p.vy = -PHYS.swim * 1.6;
@@ -1077,27 +1096,76 @@ function setTile(x, y, id) {
   refreshTile(x, y);
   if (mapData) { const rgb = id ? BLOCKS[id].rgb : (y > world.surf[x] ? [20, 16, 18] : [27, 38, 51]); const o = (y * W + x) * 4; mapData.data[o] = rgb[0]; mapData.data[o + 1] = rgb[1]; mapData.data[o + 2] = rgb[2]; mapDirty = true; }
 }
+let tip = null;                     // 狙っているブロックの説明 {x, y, text, bad}
+// 長押しで掘っているとき、狙ったブロックが掘れて空になったら、自分から狙いへの向きの先にある次のブロックへ進む
+function rayTarget(tx, ty) {
+  const id = tileAt(tx, ty);
+  if (id && isSolid[id]) return [tx, ty];
+  if (!pointer || !pointer.dug) return [tx, ty];
+  const cx = player.x, cy = player.y - PLAYER.h / 2, ex = (tx + .5) * T - cx, ey = (ty + .5) * T - cy, len = Math.hypot(ex, ey) || 1;
+  for (let d = 0; d <= REACH * T; d += T / 4) {
+    const x = Math.floor((cx + ex / len * d) / T), y = Math.floor((cy + ey / len * d) / T);
+    const b = tileAt(x, y);
+    if (b && isSolid[b] && inReach(x, y)) return [x, y];
+  }
+  return [tx, ty];
+}
+// S・▼ を押しっぱなし：足元のブロック（体が乗っている列ぜんぶ）を掘る
+function downTarget() {
+  const p = player;
+  if (!input.down || !p.ground || dbg.fly || overlapsTile(p.x, p.y - 2, id => id === B.LADDER)) return null;
+  if (!mining || !mining.down) {   // 掘りはじめに、体がちょうど2列に乗るように寄せる
+    const nx = Math.round(p.x / T) * T;
+    if (Math.abs(nx - p.x) < T * .6 && !bodyHits(nx, p.y)) p.x = nx;
+  }
+  const ty = Math.floor(p.y / T) , x0 = Math.floor((p.x - PLAYER.w / 2) / T), x1 = Math.floor((p.x + PLAYER.w / 2 - .01) / T);
+  for (let x = x0; x <= x1; x++) { const id = tileAt(x, ty); if (id && isSolid[id]) return [x, ty]; }
+  return null;
+}
 function useTool(dt) {
-  if (!pointer) { mining = null; return; }
-  const [tx, ty] = screenToTile(pointer.sx, pointer.sy);
+  tip = null;
+  if (!pointer) {
+    const dt0 = mode === 'dig' ? downTarget() : null;
+    if (!dt0) { if (mining && mining.down) mining = null; else if (mining && !mining.down) mining = null; return; }
+    digStep(dt0[0], dt0[1], dt, true);
+    return;
+  }
+  let [tx, ty] = screenToTile(pointer.sx, pointer.sy);
   if (tx < 0 || ty < 0 || tx >= W || ty >= H) { mining = null; return; }
-  if (!inReach(tx, ty)) { mining = null; return; }
+  if (mode === 'dig') [tx, ty] = rayTarget(tx, ty);
+  if (!inReach(tx, ty)) {
+    mining = null;
+    const d = Math.hypot((tx + .5) * T - player.x, (ty + .5) * T - (player.y - PLAYER.h / 2)) / T;
+    tip = {x: tx, y: ty, text: `遠くて届かない（${d.toFixed(0)}ブロック先。届くのは${REACH}ブロックまで）`, bad: true};
+    return;
+  }
   if (mode === 'place') {
+    if (selected >= 0 && inv.get(selected) > 0) tip = {x: tx, y: ty, text: `置く：${BLOCKS[selected].name}（残り${inv.get(selected)}）`};
     if (pointer.fresh && canPlace(tx, ty)) {
       setTile(tx, ty, selected); inv.set(selected, inv.get(selected) - 1);
-      if (inv.get(selected) <= 0) { inv.delete(selected); selected = [...inv.keys()][0] ?? -1; }
+      if (inv.get(selected) <= 0) { const name = BLOCKS[selected].name; inv.delete(selected); selected = [...inv.keys()][0] ?? -1; toast(`${name}を使いきった`); }
       updateHotbar();
     }
     pointer.fresh = false;
     return;
   }
+  digStep(tx, ty, dt, false);
+}
+function digStep(tx, ty, dt, down) {
   const id = tileAt(tx, ty);
   if (!id) { mining = null; return; }
   const info = digInfo(tx, ty);
-  if (!info.can) { if (pointer.fresh) toast(info.why); pointer.fresh = false; mining = null; return; }
-  pointer.fresh = false;
-  if (!mining || mining.x !== tx || mining.y !== ty) mining = {x: tx, y: ty, t: 0, swings: info.swings};
+  if (!info.can) {
+    tip = {x: tx, y: ty, text: info.why, bad: true};
+    if (pointer && pointer.fresh) toast(info.why);
+    if (pointer) pointer.fresh = false;
+    mining = null; return;
+  }
+  if (pointer) pointer.fresh = false;
+  if (!mining || mining.x !== tx || mining.y !== ty) mining = {x: tx, y: ty, t: 0, swings: info.swings, down};
   mining.t += dt;
+  const done = Math.floor(mining.t / SWING);
+  tip = {x: tx, y: ty, text: `${BLOCKS[id].name}　あと${Math.max(0, mining.swings - done)}振り`};
   if (mining.t >= mining.swings * SWING) {
     setTile(tx, ty, B.AIR);
     inv.set(id, (inv.get(id) || 0) + 1);
@@ -1105,6 +1173,7 @@ function useTool(dt) {
     if (isOre[id] && inv.get(id) === 1) toast(`${BLOCKS[id].name}を見つけた！`);
     updateHotbar();
     mining = null;
+    if (pointer) pointer.dug = true;
   }
 }
 
@@ -1191,10 +1260,19 @@ function draw() {
     const [tx, ty] = screenToTile(pointer.sx, pointer.sy);
     const ok = inReach(tx, ty);
     ov.lineStyle(lw, ok ? (mode === 'place' ? 0x8fd0ff : 0xffffff) : 0xff5a5a, ok ? 1 : .8).strokeRect(tx * T + .5, ty * T + .5, T - 1, T - 1);
-    if (mining && mining.swings > 0) {
-      const f = Math.min(1, Math.floor(mining.t / SWING) / mining.swings);
-      ov.fillStyle(0x000000, .45).fillRect(mining.x * T, mining.y * T + T * (1 - f), T, T * f);
+  }
+  if (mining && mining.swings > 0) {   // 1振りごとにひびが広がる
+    const f = Math.min(1, Math.floor(mining.t / SWING) / mining.swings), x = mining.x * T, y = mining.y * T, c = T / 2;
+    if (f > 0) {
+      ov.lineStyle(Math.max(lw, 1.2), 0x000000, .85);
+      const arms = [[-.9, -.7], [.8, -.9], [.9, .6], [-.6, .95], [.1, -1], [-1, .15]];
+      arms.slice(0, 2 + Math.ceil(f * 4)).forEach(([ax, ay], i) => {
+        const L = c * Math.min(1, f * 1.4), mx = x + c + ax * L * .5 + (i % 2 ? 2 : -2) * f, my = y + c + ay * L * .5;
+        ov.lineBetween(x + c, y + c, mx, my); ov.lineBetween(mx, my, x + c + ax * L, y + c + ay * L);
+      });
+      ov.fillStyle(0x000000, .25 * f).fillRect(x, y, T, T);
     }
+    ov.lineStyle(lw, 0xffffff, .9).strokeRect(x + .5, y + .5, T - 1, T - 1);
   }
   if (dbg.map) drawMap();
 }
@@ -1231,6 +1309,16 @@ function drawMap() {
 
 /* ---------- 画面上の文字 ---------- */
 function hud() {
+  const el = $('digTip');
+  if (tip) {
+    const sx = ((tip.x + .5) * T - cam.x) * zoom / DPR + innerWidth / 2, sy = (tip.y * T - cam.y) * zoom / DPR + innerHeight / 2 - 4;
+    el.style.display = 'block'; el.style.left = sx + 'px'; el.style.top = sy + 'px'; el.textContent = tip.text; el.classList.toggle('bad', !!tip.bad);
+  } else el.style.display = 'none';
+  const touchUi = document.body.classList.contains('touch') || coarse;
+  $('keys').textContent = (touchUi
+    ? '長押し：掘る　▼長押し：真下に掘る　⛏/🧱：切り替え'
+    : '左長押し：掘る　右クリック：置く　S押しっぱなし：真下に掘る　E：掘る・置く　1〜8：持ち物　`：デバッグ')
+    + (mode === 'place' && selected >= 0 ? `\n🧱 置くもの：${BLOCKS[selected].name}（${inv.get(selected) || 0}）` : '');
   const p = player, tx = Math.floor(p.x / T), ty = Math.floor((p.y - 1) / T);
   const region = world.regionOf[Math.max(0, Math.min(W - 1, tx))];
   const layer = world.layer[Math.max(0, Math.min(H - 1, ty)) * W + Math.max(0, Math.min(W - 1, tx))];
