@@ -263,5 +263,7 @@ window.game = new Phaser.Game({
 let rt = 0;
 addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { game.scale.resize(innerWidth*DPR, innerHeight*DPR); game.scale.setZoom(1/DPR); }, 100); });
 </script>
+<div id="verTag" style="position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom) + 2px);font-size:10px;opacity:.55;pointer-events:none;z-index:20;text-shadow:0 0 3px #000"></div>
+<script>{ const m = location.pathname.match(/\/([0-9a-f]{40})\//); document.getElementById('verTag').textContent = m ? '版 ' + m[1].slice(0, 7) : ''; }</script>
 </body>
 </html>
