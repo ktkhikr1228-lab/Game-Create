@@ -76,6 +76,11 @@
   .note { background: #e9dfc6; color: #2b2116; border-radius: 6px; padding: 12px 14px; font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; white-space: pre-line; }
   #logText { font: 12px/1.6 ui-monospace, Menlo, monospace; white-space: pre-wrap; background: #0e151d; padding: 8px 10px; border-radius: 6px; margin: 8px 0 0; }
   .row2 { display: flex; gap: 8px; } .row2 > button { flex: 1; }
+  #tinHint { font-size: 12px; color: #ffe9a8; text-shadow: 0 1px 2px #000, 0 0 4px #000; margin-top: 2px; }
+  #askBox { margin-top: 10px; font-size: 13px; } #askBox .opts { display: grid; gap: 4px; margin-top: 6px; }
+  #askBox .opts button { padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,.3); background: transparent; text-align: left; }
+  #askBox .opts button.on { background: #6a3fa0; border-color: #c9a8ff; }
+  #dbgPanel h3 { margin: 8px 0 4px; font-size: 12px; color: #c9a8ff; }
   .sub { padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.3); background: transparent; margin-top: 12px; width: 100%; }
 
   /* るつぼ：1画面で 金属 → 配合 → 量。下に固定するのは「作る」と合計消費だけ（PR #36） */
@@ -118,6 +123,7 @@
 <div id="top">
   <div id="status">
     <div id="where">…</div>
+    <div id="tinHint" hidden></div>
     <div id="hpBox"><div id="hp"></div></div>
     <div id="hotbar"></div>
   </div>
@@ -150,6 +156,14 @@
     <button id="toBeetle">甲殻虫の前へ</button>
     <button id="toRiver">川へ</button>
   </div>
+  <h3>ブロックの絵の細かさ（1ブロックのドット数）</h3>
+  <div class="grid" style="grid-template-columns: repeat(4, 1fr)">
+    <button data-tex="8">8</button><button data-tex="16">16</button><button data-tex="32">32</button><button data-tex="64">64</button>
+  </div>
+  <h3>ブロックの大きさ（画面の短い辺に映る数）</h3>
+  <div class="grid" style="grid-template-columns: repeat(4, 1fr)">
+    <button data-zoom="18">18</button><button data-zoom="26">26</button><button data-zoom="36">36</button><button data-zoom="48">48</button>
+  </div>
 </div>
 
 <div class="sheet" id="help">
@@ -180,6 +194,10 @@
   <div class="card">
     <h2 id="logTitle">記録</h2>
     <div id="logLead" style="font-size:13px"></div>
+    <div id="askBox" hidden>
+      <b>1問だけ：どこで「青銅の剣が欲しい」と思った？</b>
+      <div class="opts" id="askOpts"></div>
+    </div>
     <pre id="logText"></pre>
     <div class="row2">
       <button class="sub" id="logCopy">記録をコピー</button>
@@ -310,7 +328,10 @@ function buildMap() {
   fill(4, SURF, 22, SURF + 4, B.WATER);
   fill(3, SURF + 5, 23, SURF + 6, B.GRAVEL);
   fill(3, SURF, 3, SURF + 4, B.GRAVEL); fill(23, SURF, 23, SURF + 4, B.GRAVEL);   // 岸
-  for (const [x, y] of [[6, 5], [9, 6], [12, 5], [15, 5], [18, 6], [20, 5]]) blocks[idx(x, SURF + y)] = B.CASSITERITE;
+  fill(4, SURF + 2, 5, SURF + 4, B.GRAVEL); fill(21, SURF + 2, 22, SURF + 4, B.GRAVEL); // 岸ぎわの浅瀬（深さ2）
+  // 錫石：浅瀬と岸（岸に立ったまま掘れる）と川底
+  for (const [x, y] of [[4, 2], [5, 3], [3, 1], [3, 3], [22, 2], [21, 3], [23, 2],
+                        [6, 5], [8, 5], [9, 6], [11, 5], [12, 6], [14, 5], [15, 5], [17, 6], [18, 5], [20, 5]]) blocks[idx(x, SURF + y)] = B.CASSITERITE;
   MARK.river = [13, SURF - 1];
 
   // --- 町：板張りの地面と鍛冶場 ---
@@ -341,7 +362,7 @@ function buildMap() {
   carve(86, F - 4, 87, F - 1);                                                    // 坂の終わりからつながる入口
   carve(88, F - 3, 100, F - 1);                                                   // 高さ3：跳び越せない
   carve(101, F - 6, 117, F - 1);                                                  // 奥の空洞（上にも岩盤を残して、地上から掘り抜けないように）
-  ents.push({kind: 'note', x: 84, y: floorAt(84), label: '落ちている書き付け', id: 'cave'});
+  ents.push({kind: 'note', x: 86, y: F, label: '落ちている書き付け', id: 'cave', after: 'bounce'});   // 初めて弾かれたあとに気づく
   ents.push({kind: 'enemy', type: 'beetle', x: 95, y: F, min: 88, max: 100});
   ents.push({kind: 'lamp', x: 104, y: F - 5});
   ents.push({kind: 'lamp', x: 115, y: F - 5});
@@ -384,6 +405,8 @@ function record(key, text, repeat = false) {
   if (!repeat && once.has(key)) return false;
   once.add(key); log.push({t: playTime, text}); return true;
 }
+function recordDbg(text) { log.push({t: playTime, text, dbg: true}); }   // デバッグ操作（記録では続いたものを1行にまとめる）
+let answer = '';
 
 /* ================= 画面の大きさ ================= */
 let zoomBlocks = +(params.get('zoom') || 0) || 26;   // 画面の短い辺に映るブロック数（オーナーの試遊で広めに）
@@ -519,7 +542,7 @@ function attack() {
       if (!first && [3, 10, 20].includes(counters.bounce)) record('bounce' + counters.bounce, `甲殻に${counters.bounce}回弾かれた（${sw.name}）`, true);
       spark(e.px - p.face * s.w / 2, e.py - s.h / 2, '#fff2a0', 10);
       p.kb = .18; p.vx = -p.face * 150;
-      toast(counters.bounce === 1 ? 'カン！ 刃が甲殻に弾かれた' : 'カン！');
+      toast(counters.bounce === 1 ? 'カン！ 刃が甲殻に弾かれた。入口に紙切れが落ちている' : 'カン！');
       e.stun = .2;
       continue;
     }
@@ -575,7 +598,7 @@ function useTool(dt) {
 function nearThing() {
   const p = player; let best = null, bd = 2.6 * T;
   for (const e of ents) {
-    if (!['crucible', 'note', 'sign', 'mine'].includes(e.kind)) continue;
+    if (!['crucible', 'note', 'sign', 'mine'].includes(e.kind) || (e.after && !once.has(e.after))) continue;
     const d = Math.hypot((e.x + .5) * T - p.x, e.y * T - p.y);
     if (d < bd) { bd = d; best = e; }
   }
@@ -688,15 +711,25 @@ function finish() {
   openLog(true);
 }
 function logText() {
-  const lines = log.map(l => `${fmtT(l.t)}  ${l.text}`);
+  const lines = [];
+  for (let i = 0; i < log.length; i++) {
+    const l = log[i];
+    if (!l.dbg) { lines.push(`${fmtT(l.t)}  ${l.text}`); continue; }
+    const cnt = new Map(); let j = i;
+    for (; j < log.length && log[j].dbg; j++) cnt.set(log[j].text, (cnt.get(log[j].text) || 0) + 1);
+    lines.push(`${fmtT(l.t)}  （デバッグ：${[...cnt].map(([k, n]) => n > 1 ? `${k}×${n}` : k).join('、')}）`);
+    i = j - 1;
+  }
   lines.push('', `弾かれた回数 ${counters.bounce} / ぶよ虫を倒した数 ${counters.grubKills} / 倒れた回数 ${counters.deaths}`);
   lines.push(`剣：${swords.map(s => s.sn ? `${s.name}(錫${s.sn}%・${s.q}段)` : s.name).join('、')}`);
   lines.push(`遊んだ時間 ${fmtT(playTime)}`);
+  if (answer) lines.push(`青銅の剣が欲しくなったところ：${answer}`);
   return lines.join('\n');
 }
 function openLog(end) {
   $('logTitle').textContent = end ? 'ここまで（試作の終わり）' : '記録';
-  $('logLead').textContent = end ? '廃坑の入口に着きました。下の記録をコピーして、どこで「青銅の剣が欲しい」と思ったかを一言添えて送ってください。' : 'ここまでに起きたこと。時刻は遊びはじめてからの経過時間。';
+  $('logLead').textContent = end ? '廃坑の入口に着きました。下の1問に答えてから、記録をコピーして送ってください。' : 'ここまでに起きたこと。時刻は遊びはじめてからの経過時間。';
+  $('askBox').hidden = !end;
   $('logText').textContent = logText();
   showSheet('logSheet');
 }
@@ -730,32 +763,90 @@ const DS = 4;   // 暗さの絵は 4px ごとに1点（なめらかに引き伸�
 // タイル番号：0〜NB*4-1 = ブロック×明るさ4段、そのあと 奥の壁3種、水（奥の壁つき3種）、鉱石
 const WALL_IDS = [B.DIRT, B.STONE, B.BEDROCK];
 let TI = {};
+let TEX = [8, 16, 32, 64].includes(+params.get('tex')) ? +params.get('tex') : 16;   // 1ブロックの絵のドット数（デバッグで変えられる）
+let tmap = null;
+const rgbOf = hex => { const h = (hex.length === 4 ? hex.replace(/[0-9a-f]/gi, d => d + d) : hex).slice(1), n = parseInt(h, 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; };
+function rng(seed) { let a = seed >>> 0; return () => { a = a + 0x6D2B79F5 >>> 0; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+// 1ブロックを R×R ドットで描く。形は R に対する割合で決めるので、どの細かさでも同じ見た目になる
+function paintBlock(c, R, id, v, seed) {
+  const r = rng(seed * 977 + id * 131 + v * 7 + R), base = rgbOf(BLOCKS[id].color), lum = [.9, .96, 1, 1.05][v];
+  const dot = (x, y, col, f) => { if (x < 0 || y < 0 || x >= R || y >= R) return; c.fillStyle = `rgb(${Math.min(255, col[0] * f) | 0},${Math.min(255, col[1] * f) | 0},${Math.min(255, col[2] * f) | 0})`; c.fillRect(x | 0, y | 0, 1, 1); };
+  const cell = Math.max(1, R / 8), cn = Math.ceil(R / cell), coarse = Array.from({length: cn * cn}, () => r());
+  const noise = (col, amp) => { for (let y = 0; y < R; y++) for (let x = 0; x < R; x++) dot(x, y, col, lum * (1 - amp / 2 + amp * (coarse[Math.floor(y / cell) * cn + Math.floor(x / cell)] * .65 + r() * .35))); };
+  const blob = (cx, cy, rad, col, f) => { for (let y = Math.floor(cy - rad); y <= cy + rad; y++) for (let x = Math.floor(cx - rad); x <= cx + rad; x++) if ((x + .5 - cx) ** 2 + (y + .5 - cy) ** 2 <= rad * rad) dot(x, y, col, f); };
+  const key = BLOCKS[id].key;
+  if (key === 'GRASS') {
+    noise(rgbOf('#7a5a3f'), .2);
+    const g = rgbOf('#5f8a3e');
+    for (let x = 0; x < R; x++) { const d = R * (.28 + r() * .14); for (let y = 0; y < d; y++) dot(x, y, g, lum * (.9 + r() * .2)); if (r() < .35) dot(x, d, g, lum * .8); }
+    for (let i = 0; i < R / 3; i++) dot(r() * R, r() * R * .2, g, 1.3);
+  } else if (key === 'STONE' || key === 'BEDROCK') {
+    noise(base, .22);
+    for (let k = 0; k < 2; k++) { let x = r() * R, y = r() * R; for (let i = 0; i < R * .6; i++) { dot(x, y, base, lum * .68); x += r() < .5 ? 1 : 0; y += r() < .6 ? (r() < .5 ? 1 : -1) : 0; } }
+    for (let i = 0; i < R / 2; i++) dot(r() * R, r() * R, base, key === 'BEDROCK' ? 1.6 : 1.18);
+  } else if (key === 'DIRT') {
+    noise(base, .2);
+    for (let i = 0; i < R / 4; i++) blob(r() * R, r() * R, Math.max(.6, R / 20), base, r() < .5 ? .72 : 1.25);
+  } else if (key === 'GRAVEL') {
+    noise(base, .1); for (let y = 0; y < R; y++) for (let x = 0; x < R; x++) if (r() < .5) dot(x, y, base, lum * .72);
+    for (let i = 0; i < 7; i++) { const cx = r() * R, cy = r() * R, rad = R * (.09 + r() * .08), f = lum * (.85 + r() * .35); blob(cx, cy, rad, base, f); dot(cx - rad * .4, cy - rad * .4, base, f * 1.25); }
+  } else if (key === 'PLANK') {
+    noise(base, .12);
+    const n = 3; for (let k = 1; k < n; k++) for (let x = 0; x < R; x++) dot(x, k * R / n, base, .62);
+    for (let i = 0; i < R; i++) dot(r() * R, r() * R, base, .85);
+  } else noise(base, .15);
+}
 function buildTiles() {
-  const draws = [], add = fn => { draws.push(fn); return draws.length - 1; };
-  const fill = (c, col) => { c.fillStyle = col; c.fillRect(0, 0, T, T); };
-  TI.solid = BLOCKS.map(b => [0, 1, 2, 3].map(sh => add(c => fill(c, PAL[b.id][sh]))));
-  TI.wall = WALL_IDS.map(w => add(c => fill(c, WALL[w])));
-  TI.water = [...WALL_IDS.map(w => add(c => { fill(c, WALL[w]); c.globalAlpha = .72; fill(c, PAL[B.WATER][2]); c.globalAlpha = 1; })),
-              add(c => { c.globalAlpha = .72; fill(c, PAL[B.WATER][2]); c.globalAlpha = 1; })];
+  const R = TEX, draws = [], add = fn => { draws.push(fn); return draws.length - 1; };
+  const dim = (c, a) => { c.fillStyle = `rgba(0,0,0,${a})`; c.fillRect(0, 0, R, R); };
+  const water = c => { c.fillStyle = PAL[B.WATER][2]; c.globalAlpha = .72; c.fillRect(0, 0, R, R); c.globalAlpha = .35; c.fillStyle = '#9cc3ee'; const r = rng(5 + R); for (let i = 0; i < R / 2; i++) c.fillRect(r() * R | 0, r() * R | 0, Math.max(1, R / 6) | 0, 1); c.globalAlpha = 1; };
+  TI.solid = BLOCKS.map(b => [0, 1, 2, 3].map(sh => add(c => paintBlock(c, R, b.id, sh, 1))));
+  TI.wall = WALL_IDS.map(w => add(c => { paintBlock(c, R, w, 1, 9); dim(c, .66); }));
+  TI.water = [...WALL_IDS.map(w => add(c => { paintBlock(c, R, w, 1, 9); dim(c, .66); water(c); })), add(water)];
   TI.ore = {};
   for (const b of BLOCKS) if (b.ore) TI.ore[b.id] = [0, 1, 2, 3].map(sh => add(c => {
-    fill(c, PAL[B[b.host]][sh]);
-    c.fillStyle = PAL[b.id][3]; const q = T / 6;
-    c.fillRect(q, q, q * 1.8, q * 1.8); c.fillRect(q * 3.3, q * 2.2, q * 1.8, q * 1.6); c.fillRect(q * 1.5, q * 3.7, q * 1.8, q * 1.5);
-    if (b.glint) { c.fillStyle = b.glint; c.fillRect(q * 1.4, q * 1.2, q * .6, q * .6); c.fillRect(q * 3.8, q * 2.4, q * .5, q * .5); }
+    paintBlock(c, R, B[b.host], sh, 3);
+    const r = rng(sh * 31 + b.id + R), dot = (x, y, col) => { if (x < 0 || y < 0 || x >= R || y >= R) return; c.fillStyle = col; c.fillRect(x | 0, y | 0, 1, 1); };
+    if (b.key === 'CASSITERITE') {
+      // 錫石：黒っぽい、角ばった粒（二つの角錐を合わせた形）。縁が明るく光る
+      for (const [fx, fy, fs] of [[.32, .34, .27], [.72, .56, .22], [.34, .78, .17]]) {
+        const cx = fx * R, cy = fy * R, s = fs * R;
+        for (let y = Math.floor(cy - s - 1); y <= cy + s + 1; y++) for (let x = Math.floor(cx - s * .75 - 1); x <= cx + s * .75 + 1; x++) {
+          const d = Math.abs(x + .5 - cx) / (s * .75) + Math.abs(y + .5 - cy) / s;
+          if (d <= 1) dot(x, y, d > .72 ? '#5a463a' : (x + .5 < cx && y + .5 < cy ? '#3d2c24' : '#22160f'));
+          else if (d <= 1 + 1.2 / s) dot(x, y, '#e8dcb8');
+        }
+        dot(cx - s * .3, cy - s * .45, '#fffbe6'); if (R >= 16) dot(cx - s * .3 + 1, cy - s * .45, '#fffbe6');
+      }
+    } else {
+      // 自然銅：枝分かれした赤銅色のかたまり
+      const col = PAL[b.id][3];
+      for (let k = 0; k < 3; k++) { let x = (.2 + r() * .6) * R, y = (.2 + r() * .6) * R; const u = Math.max(1, Math.round(R / 16)); for (let i = 0; i < 14; i++) { c.fillStyle = col; c.fillRect(x | 0, y | 0, u + (R >= 16 ? u : 0), u); x += Math.round(r() * 2 - 1) * u; y += Math.round(r() * 2 - 1) * u; x = Math.max(1, Math.min(R - 2, x)); y = Math.max(1, Math.min(R - 2, y)); } }
+      for (let i = 0; i < 3; i++) { c.fillStyle = '#ffc49a'; c.fillRect((.2 + r() * .6) * R | 0, (.2 + r() * .6) * R | 0, Math.max(1, R / 16 | 0), Math.max(1, R / 16 | 0)); }
+    }
   }));
-  const COLS = 16, S = T + 2, cv = document.createElement('canvas');
+  const COLS = 16, S = R + 2, cv = document.createElement('canvas');
   cv.width = COLS * S; cv.height = Math.ceil(draws.length / COLS) * S;
-  const c = cv.getContext('2d'), tmp = document.createElement('canvas'); tmp.width = tmp.height = T; const tc = tmp.getContext('2d');
+  const c = cv.getContext('2d'), tmp = document.createElement('canvas'); tmp.width = tmp.height = R; const tc = tmp.getContext('2d');
   draws.forEach((fn, i) => {
-    tc.clearRect(0, 0, T, T); fn(tc);
+    tc.clearRect(0, 0, R, R); fn(tc);
     const ox = (i % COLS) * S + 1, oy = Math.floor(i / COLS) * S + 1;
-    c.drawImage(tmp, 0, 0, T, 1, ox, oy - 1, T, 1); c.drawImage(tmp, 0, T - 1, T, 1, ox, oy + T, T, 1);
-    c.drawImage(tmp, 0, 0, 1, T, ox - 1, oy, 1, T); c.drawImage(tmp, T - 1, 0, 1, T, ox + T, oy, 1, T);
+    c.drawImage(tmp, 0, 0, R, 1, ox, oy - 1, R, 1); c.drawImage(tmp, 0, R - 1, R, 1, ox, oy + R, R, 1);
+    c.drawImage(tmp, 0, 0, 1, R, ox - 1, oy, 1, R); c.drawImage(tmp, R - 1, 0, 1, R, ox + R, oy, 1, R);
     c.drawImage(tmp, ox, oy);
   });
+  if (scene.textures.exists('tiles')) scene.textures.remove('tiles');
   scene.textures.addCanvas('tiles', cv);
 }
+function makeLayer() {
+  if (layer) { layer.destroy(); tmap.destroy(); }
+  buildTiles();
+  const data = [];
+  for (let y = 0; y < H; y++) { const row = []; for (let x = 0; x < W; x++) row.push(tileIndexAt(x, y)); data.push(row); }
+  tmap = scene.make.tilemap({data, tileWidth: TEX, tileHeight: TEX});
+  layer = tmap.createLayer(0, tmap.addTilesetImage('tiles', 'tiles', TEX, TEX, 1, 2), 0, 0).setScale(T / TEX).setDepth(0);
+}
+function setTex(r) { TEX = r; if (scene) makeLayer(); markOpts(); }
 function tileIndexAt(x, y) {
   const id = blocks[idx(x, y)], b = BLOCKS[id];
   const w = y < SURF + 4 ? 0 : (x >= 86 && y >= SURF + 2 ? 2 : 1);
@@ -769,7 +860,6 @@ function refreshTile(x, y) { const i = tileIndexAt(x, y); if (i < 0) layer.remov
 function setupScene(sc) {
   scene = sc;
   sc.cameras.main.setBackgroundColor('#8fb4d8');
-  buildTiles();
   // 鍛冶場の建物（背景）
   const gb = sc.add.graphics().setDepth(-1);
   for (const e of ents) if (e.kind === 'forge') {
@@ -784,16 +874,13 @@ function setupScene(sc) {
   sc.add.rectangle(-W * T, SURF * T, W * T, H * T * 3, 0x3d3946).setOrigin(0, 0).setDepth(-2);
   sc.add.rectangle(W * T, SURF * T, W * T, H * T * 3, 0x3d3946).setOrigin(0, 0).setDepth(-2);
   // タイル
-  const data = [];
-  for (let y = 0; y < H; y++) { const row = []; for (let x = 0; x < W; x++) row.push(tileIndexAt(x, y)); data.push(row); }
-  const map = sc.make.tilemap({data, tileWidth: T, tileHeight: T});
-  layer = map.createLayer(0, map.addTilesetImage('tiles', 'tiles', T, T, 1, 2), 0, 0).setDepth(0);
+  makeLayer();
   // 調べられるもの（動かないので1回だけ描く）
   const gt = sc.add.graphics().setDepth(1);
   for (const e of ents) {
     const x = e.x * T, y = e.y * T;
     if (e.kind === 'crucible') { gt.fillStyle(0x5a5a5a).fillRect(x - T * .5, y - T * 1.4, T * 2, T * 1.4); gt.fillStyle(0xff9a3a).fillRect(x - T * .2, y - T * 1.55, T * 1.4, T * .35); }
-    if (e.kind === 'note') { gt.fillStyle(0xe9dfc6).fillRect(x + T * .2, y - T * (e.id === 'forge' ? 2.4 : .35), T * .7, T * .5); }
+    if (e.kind === 'note' && !e.after) { gt.fillStyle(0xe9dfc6).fillRect(x + T * .2, y - T * (e.id === 'forge' ? 2.4 : .35), T * .7, T * .5); }
     if (e.kind === 'sign') { gt.fillStyle(0x7b5a33).fillRect(x + T * .4, y - T * 2, T * .2, T * 2); gt.fillStyle(0xc9a46b).fillRect(x - T * .2, y - T * 2.2, T * 1.4, T * .9); }
     if (e.kind === 'mine') {
       gt.fillStyle(0x120c08).fillRect(x, y - 3.4 * T, 4 * T, 3.4 * T);
@@ -852,7 +939,7 @@ function render() {
 
   // 暗さ（地下ほど暗く、自分とランプのまわりは明るい）
   const depth = Math.floor(p.y / T) - SURF;
-  const dark = !dbg.light && depth > 2;
+  const dark = !dbg.light && depth > 2 && placeAt(p.x).under;   // 暗いのは洞窟の中だけ（川の底は明るいまま）
   darkImg.setVisible(dark);
   if (dark) {
     const a = Math.min(.9, (depth - 2) / 14 + .5), dc = darkCv.getContext('2d'), k = 1 / DS;
@@ -875,6 +962,18 @@ function render() {
     gOv.lineStyle(3, 0xffffff, .35).beginPath();
     gOv.arc(p.x, p.y - PLAYER.h * .5, 40, p.face > 0 ? -1.2 : Math.PI - .9, p.face > 0 ? .9 : Math.PI + 1.2, false).strokePath();
   }
+  // 錫石は時々きらっと光る（見つけやすく）
+  const now = performance.now() / 1000;
+  const vx0 = Math.max(0, Math.floor(cam.x / T)), vx1 = Math.min(W - 1, Math.ceil((cam.x + viewW()) / T)), vy0 = Math.max(0, Math.floor(cam.y / T)), vy1 = Math.min(H - 1, Math.ceil((cam.y + viewH()) / T));
+  for (let y = vy0; y <= vy1; y++) for (let x = vx0; x <= vx1; x++) if (blocks[idx(x, y)] === B.CASSITERITE) {
+    const h = ((Math.imul(x, 2654435761) ^ Math.imul(y, 40503)) >>> 0) % 1000 / 1000, ph = (now / 1.6 + h) % 1;
+    if (ph < .22) { const a = Math.sin(ph / .22 * Math.PI), cx = x * T + T * (.25 + h * .5), cy = y * T + T * (.3 + (1 - h) * .4), L = T * .45 * a;
+      gOv.fillStyle(0xfffbe0, .95 * a).fillRect(cx - L, cy - .6, L * 2, 1.2).fillRect(cx - .6, cy - L, 1.2, L * 2).fillRect(cx - 1.2, cy - 1.2, 2.4, 2.4); }
+  }
+  for (const e of ents) if (e.kind === 'note' && e.after && once.has(e.after)) {
+    const a = .75 + .25 * Math.sin(now * 4);
+    gOv.fillStyle(0xe9dfc6, a).fillRect(e.x * T + T * .15, e.y * T - T * .35, T * .75, T * .35);
+  }
   for (const s of sparks) gOv.fillStyle(Phaser.Display.Color.HexStringToColor(s.color).color).fillRect(s.x, s.y, 2.5, 2.5);
 }
 
@@ -888,6 +987,13 @@ function hud() {
   }
   $('where').textContent = `${name}　${depth > 0 ? `地下 ${depth}` : '地上'}　/ 工房の箱：銅${bars.cu}・錫${bars.sn}本`;
   $('hp').style.width = Math.max(0, p.hp) + '%';
+  // 川にいる間は、錫があと何本要るかを出す（銅九に錫一なら、1段の剣に錫1本・3段に3本）
+  const th = $('tinHint');
+  if (name === '西の川' && !paused) {
+    const tin = (ores.get(B.CASSITERITE) || 0) + bars.sn, left = Math.max(0, MAX_QUALITY - tin);
+    th.hidden = false;
+    th.textContent = `錫 ${tin}本　剣1本に、1段なら錫1・${MAX_QUALITY}段なら錫${MAX_QUALITY}　` + (left ? `（${MAX_QUALITY}段まであと${left}）` : '（足りている）');
+  } else th.hidden = true;
   const nt = nearThing();
   const ub = $('useBtn');
   if (nt && !paused) { ub.hidden = false; ub.textContent = `✋ ${nt.label}${matchMedia('(pointer: fine)').matches ? '（E）' : ''}`; } else ub.hidden = true;
@@ -946,6 +1052,11 @@ $('useBtn').addEventListener('click', useThing);
 $('helpOk').addEventListener('click', () => hideSheet('help'));
 $('noteOk').addEventListener('click', () => hideSheet('noteSheet'));
 $('logBtn').addEventListener('click', () => openLog(false));
+for (const a of ['川で錫石を探しているとき', '洞窟でぶよ虫と戦っているとき', '岩殻虫に弾かれたとき', '書き付けを読んだとき', 'るつぼを開いたとき', '欲しくならなかった']) {
+  const b = document.createElement('button'); b.textContent = a;
+  b.onclick = () => { answer = a; for (const o of $('askOpts').children) o.classList.toggle('on', o === b); $('logText').textContent = logText(); };
+  $('askOpts').appendChild(b);
+}
 $('logOk').addEventListener('click', () => hideSheet('logSheet'));
 $('logRestart').addEventListener('click', () => location.reload());
 $('logCopy').addEventListener('click', async () => {
@@ -966,12 +1077,19 @@ $('makeBtn').addEventListener('click', make);
 /* ---------- デバッグ ---------- */
 function toggleDebug() { dbg.on = !dbg.on; document.body.classList.toggle('debug', dbg.on); if (!dbg.on) setDbg('fly', false); }
 function setDbg(k, v) { dbg[k] = v; const el = document.querySelector(`[data-dbg="${k}"]`); if (el) el.classList.toggle('on', v); }
-for (const el of document.querySelectorAll('[data-dbg]')) el.addEventListener('click', () => setDbg(el.dataset.dbg, !dbg[el.dataset.dbg]));
+for (const el of document.querySelectorAll('[data-dbg]')) el.addEventListener('click', () => { setDbg(el.dataset.dbg, !dbg[el.dataset.dbg]); recordDbg(`${el.textContent}${dbg[el.dataset.dbg] ? 'オン' : 'オフ'}`); });
 $('dbgBtn').addEventListener('click', toggleDebug);
-$('giveTin').addEventListener('click', () => { ores.set(B.CASSITERITE, (ores.get(B.CASSITERITE) || 0) + 3); updateHotbar(); toast('錫石を3個足した'); record('dbgTin', '（デバッグで錫石を足した）', true); });
-$('toTown').addEventListener('click', () => teleport(...spawn));
-$('toBeetle').addEventListener('click', () => teleport(...MARK.beetle));
-$('toRiver').addEventListener('click', () => teleport(...MARK.river));
+$('giveTin').addEventListener('click', () => { ores.set(B.CASSITERITE, (ores.get(B.CASSITERITE) || 0) + 3); updateHotbar(); toast('錫石を3個足した'); recordDbg('錫石＋3'); });
+$('toTown').addEventListener('click', () => { teleport(...spawn); recordDbg('町へ'); });
+$('toBeetle').addEventListener('click', () => { teleport(...MARK.beetle); recordDbg('甲殻虫の前へ'); });
+$('toRiver').addEventListener('click', () => { teleport(...MARK.river); recordDbg('川へ'); });
+for (const el of document.querySelectorAll('[data-tex]')) el.addEventListener('click', () => { setTex(+el.dataset.tex); recordDbg(`絵の細かさ${el.dataset.tex}`); });
+for (const el of document.querySelectorAll('[data-zoom]')) el.addEventListener('click', () => { zoomBlocks = +el.dataset.zoom; resize(); markOpts(); recordDbg(`ブロックの大きさ${el.dataset.zoom}`); });
+function markOpts() {
+  for (const el of document.querySelectorAll('[data-tex]')) el.classList.toggle('on', +el.dataset.tex === TEX);
+  for (const el of document.querySelectorAll('[data-zoom]')) el.classList.toggle('on', +el.dataset.zoom === zoomBlocks);
+}
+markOpts();
 
 /* ---------- 開始 ---------- */
 player = {x: 0, y: 0, vx: 0, vy: 0, ground: false, hp: 100, face: 1, inv: 0, kb: 0};
