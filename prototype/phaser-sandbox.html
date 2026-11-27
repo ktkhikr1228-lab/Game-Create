@@ -139,6 +139,10 @@
     <button id="zoomOut">ひく</button>
     <button id="zoomIn">寄る</button>
   </div>
+  <h3>ブロックの絵の細かさ（ドット数）</h3>
+  <div class="grid" style="grid-template-columns: repeat(4, 1fr)">
+    <button data-tex="8">8</button><button data-tex="16">16</button><button data-tex="32">32</button><button data-tex="64">64</button>
+  </div>
   <h3>持ち物</h3>
   <div class="grid"><button id="giveOres" style="grid-column: span 2">鉱石を10個ずつ</button></div>
   <h3>ワールド</h3>
@@ -881,40 +885,94 @@ const WALLC = BLOCKS.map(b => shadeCss(b.rgb, .32));       // 掘った跡の奥
 const tileShade = (x, y) => (Math.imul(x, 73856093) ^ Math.imul(y, 19349663)) >>> 0 & 3;
 const NL = 9;  // 地層の数
 const TI = {solid: [], wall: [], ore: [], ladder: [], liq: []};   // タイル番号の表
+// 1ブロックの絵のドット数（デバッグで変えられる）。形は R に対する割合で決めるので、どの細かさでも同じ見た目になる
+let TEX = [8, 16, 32, 64].includes(+params.get('tex')) ? +params.get('tex') : 16;
+function rng(seed) { let a = seed >>> 0; return () => { a = a + 0x6D2B79F5 >>> 0; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+// R×R の絵を RGBA の配列に描く道具
+function pix(R) {
+  const d = new Uint8ClampedArray(R * R * 4);
+  const set = (x, y, rgb, f = 1, a = 255) => { x |= 0; y |= 0; if (x < 0 || y < 0 || x >= R || y >= R) return; const o = (y * R + x) * 4;
+    if (a >= 255 || !d[o + 3]) { d[o] = rgb[0] * f; d[o + 1] = rgb[1] * f; d[o + 2] = rgb[2] * f; d[o + 3] = a; }
+    else { const k = a / 255; d[o] = d[o] * (1 - k) + rgb[0] * f * k; d[o + 1] = d[o + 1] * (1 - k) + rgb[1] * f * k; d[o + 2] = d[o + 2] * (1 - k) + rgb[2] * f * k; d[o + 3] = 255; } };
+  const dim = k => { for (let i = 0; i < d.length; i += 4) { d[i] *= k; d[i + 1] *= k; d[i + 2] *= k; } };
+  return {d, set, dim};
+}
+function paintBlock(P, R, id, v, seed) {
+  const r = rng(seed * 977 + id * 131 + v * 7 + R), b = BLOCKS[id], base = b.rgb, lum = [.9, .96, 1, 1.05][v];
+  const cell = Math.max(1, R / 8), cn = Math.ceil(R / cell), coarse = Array.from({length: cn * cn}, () => r());
+  const noise = (col, amp) => { for (let y = 0; y < R; y++) for (let x = 0; x < R; x++) P.set(x, y, col, lum * (1 - amp / 2 + amp * (coarse[Math.floor(y / cell) * cn + Math.floor(x / cell)] * .65 + r() * .35))); };
+  const blob = (cx, cy, rad, col, f) => { for (let y = Math.floor(cy - rad); y <= cy + rad; y++) for (let x = Math.floor(cx - rad); x <= cx + rad; x++) if ((x + .5 - cx) ** 2 + (y + .5 - cy) ** 2 <= rad * rad) P.set(x, y, col, f); };
+  const cracks = (n, f) => { for (let k = 0; k < n; k++) { let x = r() * R, y = r() * R; for (let i = 0; i < R * .6; i++) { P.set(x, y, base, lum * f); x += r() < .5 ? 1 : 0; y += r() < .6 ? (r() < .5 ? 1 : -1) : 0; } } };
+  const specks = (n, f) => { for (let i = 0; i < n; i++) P.set(r() * R, r() * R, base, f); };
+  const k = b.key;
+  if (k === 'GRASS') {
+    noise(hexRgb('#7a5a3f'), .2); const g = base;
+    for (let x = 0; x < R; x++) { const dd = R * (.28 + r() * .14); for (let y = 0; y < dd; y++) P.set(x, y, g, lum * (.9 + r() * .2)); if (r() < .35) P.set(x, dd, g, lum * .8); }
+  } else if (k === 'SAND' || k === 'SNOW' || k === 'ASH') { noise(base, k === 'SNOW' ? .06 : .14); specks(R, k === 'SNOW' ? .92 : 1.12); specks(R / 2, .85); }
+  else if (k === 'GRAVEL' || k === 'RUBBLE') {
+    noise(base, .1); for (let y = 0; y < R; y++) for (let x = 0; x < R; x++) if (r() < .5) P.set(x, y, base, lum * .72);
+    for (let i = 0; i < 7; i++) { const cx = r() * R, cy = r() * R, rad = R * (.09 + r() * .08), f = lum * (.85 + r() * .35); blob(cx, cy, rad, base, f); P.set(cx - rad * .4, cy - rad * .4, base, f * 1.25); }
+  } else if (k === 'TOWN' || k === 'MILL' || k === 'FORGE') {   // 積んだ石・れんが
+    noise(base, .1); const h = R / 4;
+    for (let row = 0; row < 4; row++) { for (let x = 0; x < R; x++) P.set(x, row * h, base, .6); const off = row % 2 ? R / 4 : 0; for (let y = row * h; y < row * h + h; y++) { P.set(off, y, base, .6); P.set(off + R / 2, y, base, .6); } }
+  } else if (k === 'TIMBER' || k === 'TRUNK') {
+    noise(base, .12); for (let x = 0; x < R; x += Math.max(2, R / 5)) for (let y = 0; y < R; y++) if (r() < .8) P.set(x + (r() < .3 ? 1 : 0), y, base, .7);
+  } else if (k === 'LEAVES' || k === 'METALLEAF') {
+    for (let y = 0; y < R; y++) for (let x = 0; x < R; x++) if (r() < .8) P.set(x, y, base, lum * (.75 + r() * .45));
+  } else if (k === 'ICE' || k === 'CRYSTAL') {
+    noise(base, .08); for (let i = 0; i < 3; i++) { const o = r() * R; for (let t = 0; t < R; t++) P.set(o + t * .5, t, [255, 255, 255], 1, 90); }
+  } else if (b.cat === 'surface') { noise(base, .2); for (let i = 0; i < R / 4; i++) blob(r() * R, r() * R, Math.max(.6, R / 20), base, r() < .5 ? .72 : 1.25); }
+  else { noise(base, .22); cracks(2, .68); specks(R / 2, 1.18); }   // 岩
+}
 function buildTileset(scene) {
-  const draws = [];   // 1タイル＝描く関数
-  const add = fn => { draws.push(fn); return draws.length - 1; };
-  const fill = (c, col) => { c.fillStyle = col; c.fillRect(0, 0, T, T); };
-  for (const b of BLOCKS) TI.solid[b.id] = [0, 1, 2, 3].map(sh => add(c => fill(c, PAL[b.id][sh])));
-  for (let l = 0; l < NL; l++) TI.wall[l] = add(c => fill(c, WALLC[HOST_BY_LAYER[l]]));
-  for (const b of BLOCKS) if (isOre[b.id]) TI.ore[b.id] = [...Array(NL)].map((_, l) => add(c => {
-    fill(c, PAL[HOST_BY_LAYER[l]][2]);
-    c.fillStyle = PAL[b.id][3]; const q = T / 6;
-    c.fillRect(q, q, q * 1.6, q * 1.6); c.fillRect(q * 3.4, q * 2.2, q * 1.6, q * 1.6); c.fillRect(q * 1.6, q * 3.8, q * 1.6, q * 1.4);
+  const R = TEX, draws = [], add = fn => { draws.push(fn); return draws.length - 1; };
+  for (const b of BLOCKS) TI.solid[b.id] = [0, 1, 2, 3].map(sh => add(P => paintBlock(P, R, b.id, sh, 1)));
+  for (let l = 0; l < NL; l++) TI.wall[l] = add(P => { paintBlock(P, R, HOST_BY_LAYER[l], 1, 9); P.dim(.34); });
+  for (const b of BLOCKS) if (isOre[b.id]) TI.ore[b.id] = [...Array(NL)].map((_, l) => add(P => {
+    paintBlock(P, R, HOST_BY_LAYER[l], 2, 3);
+    // 鉱石：まわりの岩に、角ばった粒が3つ。粒の上の縁が明るい
+    const r = rng(b.id * 17 + l + R), col = b.rgb, u = Math.max(1, Math.round(R / 16));
+    for (const [fx, fy, fs] of [[.3, .32, .2], [.7, .52, .17], [.36, .76, .15]]) {
+      const cx = (fx + (r() - .5) * .1) * R, cy = (fy + (r() - .5) * .1) * R, sz = fs * R;
+      for (let y = Math.floor(cy - sz); y <= cy + sz; y++) for (let x = Math.floor(cx - sz); x <= cx + sz; x++) {
+        const dd = Math.abs(x + .5 - cx) / sz + Math.abs(y + .5 - cy) / (sz * .85);
+        if (dd <= 1) P.set(x, y, col, y + .5 < cy - sz * .3 ? 1.25 : (dd > .7 ? .7 : 1));
+      }
+      P.set(cx - sz * .35, cy - sz * .5, [255, 255, 255], 1, 200); if (u > 1) P.set(cx - sz * .35 + 1, cy - sz * .5, [255, 255, 255], 1, 200);
+    }
   }));
-  for (let l = 0; l < NL; l++) TI.ladder[l] = add(c => {
-    fill(c, WALLC[HOST_BY_LAYER[l]]); c.fillStyle = PAL[B.LADDER][2];
-    c.fillRect(T * .15, 0, T * .14, T); c.fillRect(T * .71, 0, T * .14, T);
-    c.fillRect(T * .15, T * .2, T * .7, T * .13); c.fillRect(T * .15, T * .68, T * .7, T * .13);
+  for (let l = 0; l < NL; l++) TI.ladder[l] = add(P => {
+    paintBlock(P, R, HOST_BY_LAYER[l], 1, 9); P.dim(.34);
+    const c = BLOCKS[B.LADDER].rgb, bar = (x0, y0, w, h) => { for (let y = Math.floor(y0 * R); y < (y0 + h) * R; y++) for (let x = Math.floor(x0 * R); x < (x0 + w) * R; x++) P.set(x, y, c, x < (x0 + w * .4) * R ? 1.15 : .95); };
+    bar(.15, 0, .14, 1); bar(.71, 0, .14, 1); bar(.15, .2, .7, .13); bar(.15, .68, .7, .13);
   });
-  for (const b of BLOCKS) if (b.cat === 'liquid' || b.cat === 'plant') TI.liq[b.id] = [...Array(NL + 1)].map((_, l) => add(c => {
-    if (l < NL) fill(c, WALLC[HOST_BY_LAYER[l]]);   // l === NL は地上（後ろは空）
-    c.globalAlpha = b.cat === 'liquid' ? .75 : .9; fill(c, PAL[b.id][2]); c.globalAlpha = 1;
+  for (const b of BLOCKS) if (b.cat === 'liquid' || b.cat === 'plant') TI.liq[b.id] = [...Array(NL + 1)].map((_, l) => add(P => {
+    if (l < NL) { paintBlock(P, R, HOST_BY_LAYER[l], 1, 9); P.dim(.34); }   // l === NL は地上（後ろは空）
+    if (b.cat === 'plant') { paintBlock(P, R, b.id, 2, 5); return; }
+    const r = rng(b.id + R + l);
+    for (let y = 0; y < R; y++) for (let x = 0; x < R; x++) P.set(x, y, b.rgb, 1, 190);
+    for (let i = 0; i < R / 2; i++) { const x = r() * R, y = r() * R; for (let t = 0; t < Math.max(1, R / 6); t++) P.set(x + t, y, b.rgb, 1.35, 200); }
   }));
   // にじみ防止に、タイルのまわりを1pxずつ伸ばして並べる
-  const COLS = 32, ROWS = Math.ceil(draws.length / COLS), S = T + 2;
+  const COLS = 32, ROWS = Math.ceil(draws.length / COLS), S = R + 2;
   const cv = document.createElement('canvas'); cv.width = COLS * S; cv.height = ROWS * S;
-  const c = cv.getContext('2d'), tmp = document.createElement('canvas'); tmp.width = tmp.height = T;
+  const c = cv.getContext('2d'), tmp = document.createElement('canvas'); tmp.width = tmp.height = R;
   const tc = tmp.getContext('2d');
   draws.forEach((fn, i) => {
-    tc.clearRect(0, 0, T, T); fn(tc);
+    const P = pix(R); fn(P);
+    tc.putImageData(new ImageData(P.d, R, R), 0, 0);
     const ox = (i % COLS) * S + 1, oy = Math.floor(i / COLS) * S + 1;
-    c.drawImage(tmp, 0, 0, T, 1, ox, oy - 1, T, 1); c.drawImage(tmp, 0, T - 1, T, 1, ox, oy + T, T, 1);
-    c.drawImage(tmp, 0, 0, 1, T, ox - 1, oy, 1, T); c.drawImage(tmp, T - 1, 0, 1, T, ox + T, oy, 1, T);
+    c.drawImage(tmp, 0, 0, R, 1, ox, oy - 1, R, 1); c.drawImage(tmp, 0, R - 1, R, 1, ox, oy + R, R, 1);
+    c.drawImage(tmp, 0, 0, 1, R, ox - 1, oy, 1, R); c.drawImage(tmp, R - 1, 0, 1, R, ox + R, oy, 1, R);
     c.drawImage(tmp, ox, oy);
   });
   if (scene.textures.exists('tiles')) scene.textures.remove('tiles');
   scene.textures.addCanvas('tiles', cv);
+}
+function setTex(r) {
+  TEX = r;
+  if (scene && world) { clearChunks(); buildTileset(scene); updateChunks(); }
+  for (const el of document.querySelectorAll('[data-tex]')) el.classList.toggle('on', +el.dataset.tex === TEX);
 }
 function tileIndexAt(x, y) {
   const i = y * W + x, id = blocks[i], l = world.layer[i], under = y > world.surf[x];
@@ -934,9 +992,9 @@ function makeChunk(cx, cy) {
   for (let y = 0; y < CH; y++) { const row = []; const ty = cy * CH + y;
     for (let x = 0; x < CH; x++) { const tx = cx * CH + x; row.push(tx < W && ty < H ? tileIndexAt(tx, ty) : -1); }
     data.push(row); }
-  const map = scene.make.tilemap({data, tileWidth: T, tileHeight: T});
-  const ts = map.addTilesetImage('tiles', 'tiles', T, T, 1, 2);
-  const layer = map.createLayer(0, ts, cx * CH * T, cy * CH * T).setDepth(0);
+  const map = scene.make.tilemap({data, tileWidth: TEX, tileHeight: TEX});
+  const ts = map.addTilesetImage('tiles', 'tiles', TEX, TEX, 1, 2);
+  const layer = map.createLayer(0, ts, cx * CH * T, cy * CH * T).setScale(T / TEX).setDepth(0);
   chunks.set(cy * 10000 + cx, {map, layer, cx, cy});
 }
 function clearChunks() { for (const c of chunks.values()) c.map.destroy(); chunks.clear(); }
@@ -1445,6 +1503,7 @@ for (const el of document.querySelectorAll('[data-dbg]')) el.addEventListener('c
 for (const el of document.querySelectorAll('[data-pick]')) el.addEventListener('click', () => { setPick(+el.dataset.pick); toast(`ツルハシの硬さ ${pick}`); });
 $('dbgBtn').addEventListener('click', () => toggleDebug());
 $('toTown').addEventListener('click', () => teleport(...player.spawn));
+for (const el of document.querySelectorAll('[data-tex]')) { el.classList.toggle('on', +el.dataset.tex === TEX); el.addEventListener('click', () => setTex(+el.dataset.tex)); }
 $('zoomIn').addEventListener('click', () => { zoomBlocks = Math.max(8, zoomBlocks - 4); resize(); });
 $('zoomOut').addEventListener('click', () => { zoomBlocks = Math.min(120, zoomBlocks + 6); resize(); });
 $('regen').addEventListener('click', () => newWorld($('seed').value.trim() || 'komorebi', $('size').value));
