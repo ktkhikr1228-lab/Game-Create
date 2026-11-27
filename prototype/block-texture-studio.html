@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>こもれび鉱洞 — テラリア風ブロック＆オートタイル試作</title>
+  <style>
+    :root {
+      --cobble-dark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%2320242a'/%3E%3Crect x='1' y='1' width='5' height='4' fill='%23333942'/%3E%3Crect x='7' y='1' width='7' height='5' fill='%232c3139'/%3E%3Crect x='1' y='6' width='6' height='4' fill='%232a2f37'/%3E%3Crect x='8' y='7' width='7' height='4' fill='%23353b44'/%3E%3Crect x='1' y='11' width='4' height='4' fill='%23313740'/%3E%3Crect x='6' y='11' width='5' height='4' fill='%23272c33'/%3E%3Crect x='12' y='12' width='3' height='3' fill='%23353b45'/%3E%3C/svg%3E");
+      --cobble-mid: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%23333942'/%3E%3Crect x='1' y='1' width='5' height='4' fill='%234c5360'/%3E%3Crect x='2' y='1' width='3' height='1' fill='%23606978'/%3E%3Crect x='7' y='1' width='7' height='5' fill='%23444b57'/%3E%3Crect x='1' y='6' width='6' height='4' fill='%23404752'/%3E%3Crect x='8' y='7' width='7' height='4' fill='%234e5663'/%3E%3Crect x='1' y='11' width='4' height='4' fill='%2349505c'/%3E%3Crect x='6' y='11' width='5' height='4' fill='%233b414c'/%3E%3Crect x='12' y='12' width='3' height='3' fill='%234f5764'/%3E%3C/svg%3E");
+      --cobble-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%23444b57'/%3E%3Crect x='1' y='1' width='5' height='4' fill='%23606876'/%3E%3Crect x='2' y='1' width='3' height='1' fill='%23788292'/%3E%3Crect x='7' y='1' width='7' height='5' fill='%23565e6b'/%3E%3Crect x='1' y='6' width='6' height='4' fill='%23505865'/%3E%3Crect x='8' y='7' width='7' height='4' fill='%23636c7a'/%3E%3Crect x='1' y='11' width='4' height='4' fill='%235c6472'/%3E%3Crect x='6' y='11' width='5' height='4' fill='%234c5360'/%3E%3Crect x='12' y='12' width='3' height='3' fill='%23646d7b'/%3E%3C/svg%3E");
+      --text: #f3f5f8;
+      --muted: #c2c9d4;
+      --pixel-out: inset 2px 2px 0 rgba(255,255,255,0.2), inset -2px -2px 0 rgba(0,0,0,0.55);
+      --pixel-in: inset 2px 2px 0 rgba(0,0,0,0.6), inset -2px -2px 0 rgba(255,255,255,0.14);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      padding: 8px 10px;
+      background-image: var(--cobble-dark);
+      background-size: 48px 48px;
+      image-rendering: pixelated;
+      color: var(--text);
+      font-family: "Inter", system-ui, -apple-system, "Hiragino Sans", "Yu Gothic", sans-serif;
+      font-size: 12px;
+      overflow: hidden;
+    }
+    @media (max-width: 820px) { body { overflow: auto; height: auto; } }
+    .app {
+      max-width: 980px;
+      height: 100%;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .stone-panel {
+      background-image: var(--cobble-mid);
+      background-size: 48px 48px;
+      border: 2px solid #12151a;
+      box-shadow: var(--pixel-out), 0 3px 0 rgba(0,0,0,0.45);
+      position: relative;
+    }
+    .stone-panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: rgba(16, 19, 25, 0.44);
+      pointer-events: none;
+    }
+    .stone-panel > * { position: relative; z-index: 1; }
+
+    .topbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      padding: 6px 10px;
+    }
+    .row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+    button.btn {
+      background-image: var(--cobble-light);
+      background-size: 32px 32px;
+      color: #fff;
+      border: 2px solid #12151a;
+      box-shadow: var(--pixel-out);
+      padding: 4px 9px;
+      font-size: 11.5px;
+      font-weight: 700;
+      font-family: inherit;
+      cursor: pointer;
+      text-shadow: 1px 1px 0 #111;
+    }
+    button.btn:hover { filter: brightness(1.12); }
+    button.btn:active { background-image: none; background-color: #20242c; box-shadow: var(--pixel-in); }
+    button.btn.active {
+      background-image: linear-gradient(180deg, #b86c28 0%, #7a3e14 100%);
+      border-color: #ffcf70;
+      color: #fff8e0;
+      box-shadow: inset 2px 2px 0 rgba(255,235,175,0.4), inset -2px -2px 0 rgba(55,20,0,0.7);
+    }
+
+    .main-grid {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1.38fr 0.62fr;
+      gap: 8px;
+    }
+    @media (max-width: 820px) { .main-grid { grid-template-columns: 1fr; } }
+    .stage-panel, .palette-panel {
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-height: 0;
+    }
+    .canvas-wrap {
+      flex: 1 1 auto;
+      min-height: 240px;
+      background: #0e1218;
+      border: 2px solid #12151a;
+      box-shadow: var(--pixel-in);
+      overflow: hidden;
+    }
+    canvas#scene {
+      width: 100%;
+      height: 100%;
+      display: block;
+      image-rendering: pixelated;
+      cursor: crosshair;
+    }
+    .preview-box {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(14, 17, 23, 0.82);
+      border: 2px solid #12151a;
+      box-shadow: var(--pixel-in);
+      padding: 7px 9px;
+    }
+    canvas#zoomPreview {
+      width: 48px;
+      height: 48px;
+      border: 2px solid #12151a;
+      image-rendering: pixelated;
+      background: #141922;
+      flex-shrink: 0;
+    }
+    .palette-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 4px;
+      overflow-y: auto;
+      flex: 1 1 auto;
+      align-content: start;
+    }
+    .block-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background-image: var(--cobble-light);
+      background-size: 32px 32px;
+      border: 2px solid #12151a;
+      box-shadow: var(--pixel-out);
+      padding: 4px 6px;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      text-align: left;
+      text-shadow: 1px 1px 0 #111;
+    }
+    .block-btn:hover { filter: brightness(1.12); }
+    .block-btn.active {
+      background-image: linear-gradient(180deg, #b86c28 0%, #7a3e14 100%);
+      border-color: #ffcf70;
+      color: #fff8e0;
+    }
+    .block-btn img {
+      width: 18px;
+      height: 18px;
+      image-rendering: pixelated;
+      border: 1px solid #12151a;
+      flex-shrink: 0;
+    }
+    .subnote { font-size: 11px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar stone-panel">
+      <div class="row">
+        <strong style="font-size:13px;color:#fff0d4;text-shadow:1px 1px 0 #111;">テラリア風ブロック試作（連結＋背景壁＋光源）</strong>
+        <button id="modeDig" class="btn active" type="button">左クリック: 掘る</button>
+        <button id="modePlace" class="btn" type="button">左クリック: 置く</button>
+      </div>
+      <div class="row">
+        <button id="lightDay" class="btn active" type="button">地上</button>
+        <button id="lightMid" class="btn" type="button">浅層</button>
+        <button id="lightDeep" class="btn" type="button">深層</button>
+        <button id="toggleGrid" class="btn" type="button">枠線: OFF</button>
+        <button id="resetBtn" class="btn" type="button">リセット</button>
+      </div>
+    </header>
+
+    <div class="main-grid">
+      <section class="stage-panel stone-panel">
+        <div class="canvas-wrap">
+          <canvas id="scene" width="648" height="396"></canvas>
+        </div>
+        <div class="row" style="justify-content:space-between;">
+          <span class="subnote">隣接連結・角丸輪郭・暗い背景壁・深部シャドウ・溶岩/浮遊鉱の発光を確認</span>
+          <span id="hoverInfo" class="subnote">カーソル: -</span>
+        </div>
+      </section>
+
+      <aside class="palette-panel stone-panel">
+        <div class="preview-box">
+          <canvas id="zoomPreview" width="16" height="16"></canvas>
+          <div>
+            <div id="selName" style="font-weight:700;font-size:13px;color:#fff0d4;">銅鉱石</div>
+            <div id="selMeta" class="subnote">浅層 ｜ 緑青と赤銅の塊</div>
+          </div>
+        </div>
+        <div id="paletteGrid" class="palette-grid"></div>
+      </aside>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const BLOCKS = [
+        { id: 1,  name: '草付き土',   meta: '地上 ｜ 草葉が生える表土',   edge: '#233b1e', hi: '#78c257', dust: '#7a5233' },
+        { id: 2,  name: '土',         meta: '表土 ｜ 滑らかにつながる',   edge: '#3d2515', hi: '#a37148', dust: '#875a38' },
+        { id: 3,  name: 'ぬかるみ',   meta: '沼地 ｜ 湿った泥土',         edge: '#1e1c14', hi: '#606e4d', dust: '#4a4332' },
+        { id: 4,  name: '岩（石）',   meta: '地下基準 ｜ 青みのある岩肌', edge: '#242933', hi: '#8d98ab', dust: '#6c7585' },
+        { id: 5,  name: '硬い岩盤',   meta: '深層壁 ｜ 濃い石積み',       edge: '#15181f', hi: '#6a7487', dust: '#4a5261' },
+        { id: 6,  name: '銅鉱石',     meta: '浅層 ｜ 赤銅＋緑青の結晶',   edge: '#2b1b14', hi: '#f2a463', dust: '#d97a43' },
+        { id: 7,  name: '錫石',       meta: '中層 ｜ 銀白の鉱石塊',       edge: '#212b33', hi: '#d6eefc', dust: '#9eb8c7' },
+        { id: 8,  name: '赤鉄鉱',     meta: '2層 ｜ 深い赤錆の塊',        edge: '#2b1414', hi: '#e38074', dust: '#b0423a' },
+        { id: 9,  name: '磁鉄鉱',     meta: '磁気の丘 ｜ 紫黒＋銀光',     edge: '#191326', hi: '#cbb0ff', dust: '#8c69c9' },
+        { id: 10, name: '浮遊鉱',     meta: '浮島 ｜ 周囲を照らす結晶',   edge: '#12313b', hi: '#b5ffff', dust: '#5ce6f5', glow: [85, 235, 255] },
+        { id: 11, name: '砂',         meta: '砂丘 ｜ 明るい粒状砂',       edge: '#6e5124', hi: '#fae5aa', dust: '#e0be72' },
+        { id: 12, name: '砂岩',       meta: '砂漠基盤 ｜ 層状の砂岩',     edge: '#47301a', hi: '#c99b63', dust: '#a67a49' },
+        { id: 13, name: '硝石鉱石',   meta: '砂漠地下 ｜ 白結晶の筋',     edge: '#423527', hi: '#ffffff', dust: '#dce8f2' },
+        { id: 14, name: '黒曜石',     meta: '水×溶岩 ｜ 黒紫ガラス岩',    edge: '#0e0a17', hi: '#9c78d4', dust: '#4a356e' },
+        { id: 15, name: '坑木・板',   meta: '防砂壁・足場 ｜ 木の梁',     edge: '#2e1c0c', hi: '#c79963', dust: '#9e703f' },
+        { id: 16, name: '水',         meta: '流体 ｜ 半透明で揺らぐ',     edge: '#164d73', hi: '#99e1ff', dust: '#57b8f0', liquid: true }
+      ];
+      const LAVA_ID = 17;
+      const BLOCK_MAP = Object.fromEntries(BLOCKS.map(b => [b.id, b]));
+      BLOCK_MAP[LAVA_ID] = { id: LAVA_ID, name: '溶岩', meta: '流体 ｜ 周囲を赤く照らす', edge: '#5e1406', hi: '#ffe680', dust: '#ff7033', liquid: true, glow: [255, 110, 35] };
+
+      function rng(seed) {
+        let s = seed >>> 0;
+        return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+      }
+      function makeTex(fn) {
+        const c = document.createElement('canvas'); c.width = 16; c.height = 16;
+        const g = c.getContext('2d'); g.imageSmoothingEnabled = false; fn(g); return c;
+      }
+      const px = (g, x, y, col, w = 1, h = 1) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+
+      // テラリア風の有機的な岩・土テクスチャ（枠線なしでシームレスに並ぶ本体用）
+      function drawOrganicBase(g, seed, cDark, cMid, cLight, streaks = true) {
+        const r = rng(seed);
+        px(g, 0, 0, cMid, 16, 16);
+        // 大きめの有機パッチ（テラリア特有の柔らかい塊感）
+        for (let i = 0; i < 14; i++) {
+          const x = Math.floor(r() * 14), y = Math.floor(r() * 14);
+          const w = 2 + Math.floor(r() * 3), h = 2 + Math.floor(r() * 2);
+          px(g, x, y, r() > 0.5 ? cDark : cLight, w, h);
+        }
+        if (streaks) {
+          for (let i = 0; i < 10; i++) {
+            const x = Math.floor(r() * 15), y = Math.floor(r() * 15);
+            px(g, x, y, r() > 0.5 ? cLight : cDark, 1, 1);
+          }
+        }
+      }
+
+      // テラリア風のゴツゴツした鉱石塊（暗い縁取り＋明るい金属面＋白い光沢点）
+      function drawTerrariaOre(g, seed, cOut, cMid, cHi, cSpec) {
+        const nuggets = [[2,2,4,4],[9,1,5,4],[1,9,5,5],[8,8,6,5]];
+        const r = rng(seed);
+        for (const [x, y, w, h] of nuggets) {
+          const ox = (x + Math.floor(r() * 2)) % 12;
+          const oy = (y + Math.floor(r() * 2)) % 12;
+          px(g, ox, oy, cOut, w, h);
+          px(g, ox + 1, oy + 1, cMid, Math.max(1, w - 2), Math.max(1, h - 2));
+          px(g, ox + 1, oy + 1, cHi, Math.max(1, w - 3), 1);
+          px(g, ox + 1, oy + 1, cSpec, 1, 1);
+        }
+      }
+
+      const TEXTURES = {};
+      let BACKWALL_DIRT, BACKWALL_STONE;
+
+      function buildTextures() {
+        // 1: 草付き土（本体は赤茶の土、上面草はオートタイル時に描画）
+        TEXTURES[1] = makeTex(g => {
+          drawOrganicBase(g, 11, '#6b4428', '#875836', '#a36e46');
+          px(g, 0, 0, '#3a7832', 16, 4);
+          px(g, 0, 0, '#5ea844', 16, 2);
+          px(g, 2, 4, '#2d5e27', 3, 2); px(g, 9, 4, '#2d5e27', 4, 1); px(g, 13, 4, '#3a7832', 2, 2);
+        });
+        // 2: 土
+        TEXTURES[2] = makeTex(g => drawOrganicBase(g, 22, '#6b4428', '#875836', '#a36e46'));
+        // 3: ぬかるみ
+        TEXTURES[3] = makeTex(g => drawOrganicBase(g, 33, '#2e2a1f', '#423c2d', '#55543e'));
+        // 4: 岩（石）
+        TEXTURES[4] = makeTex(g => drawOrganicBase(g, 44, '#525b6b', '#697487', '#8490a6'));
+        // 5: 硬い岩盤
+        TEXTURES[5] = makeTex(g => drawOrganicBase(g, 55, '#2b303b', '#3d4454', '#545e73'));
+        // 6: 銅鉱石
+        TEXTURES[6] = makeTex(g => {
+          drawOrganicBase(g, 66, '#525b6b', '#697487', '#8490a6');
+          drawTerrariaOre(g, 606, '#5c2c16', '#cf6e36', '#f2a463', '#7de0b6');
+        });
+        // 7: 錫石
+        TEXTURES[7] = makeTex(g => {
+          drawOrganicBase(g, 77, '#4c5563', '#636e80', '#7c889c');
+          drawTerrariaOre(g, 707, '#3f505c', '#8ea8b8', '#cce3f0', '#ffffff');
+        });
+        // 8: 赤鉄鉱
+        TEXTURES[8] = makeTex(g => {
+          drawOrganicBase(g, 88, '#444b57', '#5a6270', '#717a8a');
+          drawTerrariaOre(g, 808, '#4a1816', '#a83c36', '#de7668', '#ffd4c4');
+        });
+        // 9: 磁鉄鉱
+        TEXTURES[9] = makeTex(g => {
+          drawOrganicBase(g, 99, '#2c253d', '#3f3657', '#554a73');
+          drawTerrariaOre(g, 909, '#24173b', '#7b5ab5', '#b594f2', '#f0e6ff');
+        });
+        // 10: 浮遊鉱
+        TEXTURES[10] = makeTex(g => {
+          drawOrganicBase(g, 110, '#1d3742', '#2b4f5e', '#3d6b7d');
+          drawTerrariaOre(g, 1010, '#104e5c', '#2cc4d6', '#8cf7ff', '#ffffff');
+        });
+        // 11: 砂
+        TEXTURES[11] = makeTex(g => {
+          drawOrganicBase(g, 121, '#c49b52', '#deb86d', '#f2d694');
+          px(g, 2, 4, '#fae6b4', 5, 1); px(g, 9, 11, '#fae6b4', 5, 1);
+        });
+        // 12: 砂岩
+        TEXTURES[12] = makeTex(g => {
+          const bands = ['#a87d4e','#91683d','#b58a59','#7d5730'];
+          for (let y = 0; y < 16; y++) px(g, 0, y, bands[Math.floor(y / 2) % 4], 16, 1);
+          const r = rng(132);
+          for (let i = 0; i < 18; i++) px(g, Math.floor(r() * 14), Math.floor(r() * 16), r() > 0.5 ? '#c79b67' : '#6e4b28', 2, 1);
+        });
+        // 13: 硝石鉱石
+        TEXTURES[13] = makeTex(g => {
+          g.drawImage(TEXTURES[12], 0, 0);
+          drawTerrariaOre(g, 1313, '#6e655a', '#c9d7e3', '#eef7ff', '#ffffff');
+        });
+        // 14: 黒曜石
+        TEXTURES[14] = makeTex(g => {
+          drawOrganicBase(g, 144, '#181224', '#261d38', '#3c2e57');
+          px(g, 2, 3, '#7254a3', 3, 2); px(g, 9, 8, '#8d6bc4', 3, 2); px(g, 3, 3, '#c3a6f5', 1, 1);
+        });
+        // 15: 坑木・板
+        TEXTURES[15] = makeTex(g => {
+          [0, 4, 8, 12].forEach((y, i) => {
+            px(g, 0, y, i % 2 ? '#8f653a' : '#9c7042', 16, 3);
+            px(g, 0, y, '#b58653', 16, 1);
+            px(g, 0, y + 3, '#54381c', 16, 1);
+          });
+          px(g, 5, 0, '#54381c', 1, 4); px(g, 12, 4, '#54381c', 1, 4);
+          px(g, 3, 8, '#54381c', 1, 4); px(g, 10, 12, '#54381c', 1, 4);
+        });
+        // 16: 水
+        TEXTURES[16] = makeTex(g => {
+          px(g, 0, 0, 'rgba(38, 134, 198, 0.78)', 16, 16);
+          px(g, 0, 0, 'rgba(130, 218, 255, 0.9)', 16, 2);
+          px(g, 2, 6, 'rgba(110, 200, 250, 0.45)', 5, 1);
+          px(g, 9, 11, 'rgba(110, 200, 250, 0.45)', 5, 1);
+        });
+        // 17: 溶岩
+        TEXTURES[17] = makeTex(g => {
+          px(g, 0, 0, '#cf3e15', 16, 16);
+          px(g, 1, 2, '#ff9830', 6, 3); px(g, 3, 3, '#fff099', 2, 1);
+          px(g, 8, 8, '#ff9830', 6, 3); px(g, 10, 9, '#fff099', 2, 1);
+        });
+
+        // テラリア風の暗い背景壁（掘ったあとに奥に見える壁）
+        BACKWALL_DIRT = makeTex(g => drawOrganicBase(g, 201, '#2b1b11', '#382417', '#452e1e'));
+        BACKWALL_STONE = makeTex(g => drawOrganicBase(g, 202, '#1c2029', '#252a36', '#2e3542'));
+      }
+
+      const CRACKS = [1, 2, 3].map(st => makeTex(g => {
+        if (st >= 1) { px(g, 7, 6, '#0d0f14', 2, 2); px(g, 6, 8, '#0d0f14', 2, 1); }
+        if (st >= 2) { px(g, 4, 4, '#0d0f14', 3, 1); px(g, 9, 8, '#0d0f14', 3, 1); px(g, 5, 9, '#0d0f14', 1, 3); }
+        if (st >= 3) { px(g, 2, 2, '#0d0f14', 3, 1); px(g, 11, 9, '#0d0f14', 3, 2); px(g, 3, 11, '#0d0f14', 3, 2); px(g, 11, 2, '#0d0f14', 2, 3); }
+      }));
+
+      // ===== マップ＆パーティクル =====
+      const COLS = 18, ROWS = 11, CELL = 36;
+      let grid = [], backwall = [], damage = new Map(), particles = [];
+      let mode = 'dig', selectedId = 6, lightMode = 'day', showGrid = false, hoverCell = null;
+
+      function isSolid(r, c) {
+        if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return true;
+        const id = grid[r][c];
+        return id !== 0 && !BLOCK_MAP[id].liquid;
+      }
+
+      function buildDiorama() {
+        grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+        backwall = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+        damage = new Map();
+        particles = [];
+
+        for (let c = 0; c < COLS; c++) {
+          for (let r = 3; r < ROWS; r++) {
+            // 地下の背景壁（掘ったあとに残る奥の壁）
+            if (r >= 4) backwall[r][c] = (r <= 5 && c < 6) ? 1 : 2;
+            if (c < 6) {
+              if (r === 3) grid[r][c] = (c === 5) ? 3 : 1;
+              else if (r === 4) grid[r][c] = (c === 5) ? 3 : 2;
+              else if (r >= 9) grid[r][c] = 5;
+              else grid[r][c] = 4;
+            } else if (c < 12) {
+              if (r === 3 && c >= 7 && c <= 10) grid[r][c] = 11;
+              else if (r === 4) grid[r][c] = (c === 6 || c === 7) ? 16 : 11;
+              else if (r === 5) grid[r][c] = (c === 6 || c === 7) ? 16 : 12;
+              else if (r === 6) grid[r][c] = 12;
+              else grid[r][c] = 4;
+            } else {
+              if (r >= 5) grid[r][c] = 4;
+            }
+          }
+        }
+        // 自然な洞窟ポケット（背景壁が見えるように少し空洞を彫る）
+        grid[6][5] = 0; grid[7][5] = 0; grid[7][6] = 0;
+        // 鉱石・坑木・黒曜石・溶岩・浮島
+        grid[6][1] = 6; grid[6][2] = 6; grid[7][3] = 7; grid[8][2] = 7;
+        grid[8][4] = 8; grid[9][4] = 8;
+        grid[5][4] = 15; grid[6][4] = 15; grid[7][4] = 15;
+        grid[7][9] = 13; grid[7][10] = 13;
+        grid[8][7] = 14; grid[8][8] = 14;
+        grid[9][7] = LAVA_ID; grid[9][8] = LAVA_ID; grid[9][9] = LAVA_ID;
+        grid[6][13] = 9; grid[6][14] = 9; grid[7][14] = 9;
+        // 右上の浮島
+        grid[2][13] = 4; grid[2][14] = 10; grid[2][15] = 4; grid[2][16] = 10;
+        grid[3][14] = 4; grid[3][15] = 4;
+      }
+
+      // テラリア風の簡易ライティング（空気・光源からの距離で滑らかに暗くなる）
+      function computeLight() {
+        const light = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+        const q = [];
+        const baseSky = lightMode === 'day' ? 1.0 : (lightMode === 'mid' ? 0.65 : 0.32);
+
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const id = grid[r][c];
+            if (id === 0) {
+              const lvl = backwall[r][c] ? baseSky * 0.72 : baseSky;
+              light[r][c] = lvl;
+              q.push([r, c, lvl]);
+            } else if (BLOCK_MAP[id].glow) {
+              light[r][c] = 1.0;
+              q.push([r, c, 1.0]);
+            }
+          }
+        }
+        let head = 0;
+        while (head < q.length) {
+          const [r, c, l] = q[head++];
+          if (l < light[r][c] - 0.001) continue;
+          for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+            const nr = r + dr, nc = c + dc;
+            if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+            const decay = isSolid(nr, nc) ? 0.28 : 0.1;
+            const nl = l - decay;
+            if (nl > light[nr][nc]) {
+              light[nr][nc] = nl;
+              q.push([nr, nc, nl]);
+            }
+          }
+        }
+        return light;
+      }
+
+      function spawnDust(c, r, color) {
+        const cx = c * CELL + CELL / 2, cy = r * CELL + CELL / 2;
+        for (let i = 0; i < 6; i++) {
+          particles.push({
+            x: cx + (Math.random() - 0.5) * 16,
+            y: cy + (Math.random() - 0.5) * 16,
+            vx: (Math.random() - 0.5) * 90,
+            vy: -40 - Math.random() * 80,
+            size: 3 + Math.floor(Math.random() * 3),
+            color,
+            life: 0.45
+          });
+        }
+      }
+
+      const $ = id => document.getElementById(id);
+      const scene = $('scene'), sctx = scene.getContext('2d');
+      const zoom = $('zoomPreview'), zctx = zoom.getContext('2d');
+
+      function renderPalette() {
+        $('paletteGrid').innerHTML = BLOCKS.map(b => `
+          <button class="block-btn${b.id === selectedId ? ' active' : ''}" data-bid="${b.id}" type="button">
+            <img src="${TEXTURES[b.id].toDataURL()}" alt="${b.name}"><span>${b.name}</span>
+          </button>`).join('');
+        $('paletteGrid').querySelectorAll('[data-bid]').forEach(btn => {
+          btn.addEventListener('click', () => { selectedId = Number(btn.dataset.bid); renderPalette(); renderZoom(); });
+        });
+      }
+
+      function renderZoom() {
+        const b = BLOCK_MAP[selectedId] || BLOCKS[0];
+        $('selName').textContent = b.name;
+        $('selMeta').textContent = b.meta;
+        zctx.imageSmoothingEnabled = false;
+        zctx.clearRect(0, 0, 16, 16);
+        zctx.drawImage(TEXTURES[b.id], 0, 0);
+      }
+
+      function syncButtons() {
+        $('modeDig').classList.toggle('active', mode === 'dig');
+        $('modePlace').classList.toggle('active', mode === 'place');
+        $('lightDay').classList.toggle('active', lightMode === 'day');
+        $('lightMid').classList.toggle('active', lightMode === 'mid');
+        $('lightDeep').classList.toggle('active', lightMode === 'deep');
+        $('toggleGrid').textContent = `枠線: ${showGrid ? 'ON' : 'OFF'}`;
+      }
+
+      let prevTs = 0;
+
+      function draw(ts) {
+        const sec = ts / 1000;
+        const dt = prevTs ? Math.min(0.04, sec - prevTs) : 0;
+        prevTs = sec;
+
+        sctx.imageSmoothingEnabled = false;
+        // 空の背景グラデーション
+        const sky = sctx.createLinearGradient(0, 0, 0, scene.height);
+        if (lightMode === 'day') { sky.addColorStop(0, '#5a94cc'); sky.addColorStop(0.5, '#8bc1e8'); sky.addColorStop(1, '#202633'); }
+        else if (lightMode === 'mid') { sky.addColorStop(0, '#222b3d'); sky.addColorStop(1, '#10141c'); }
+        else { sky.addColorStop(0, '#0d1017'); sky.addColorStop(1, '#06070a'); }
+        sctx.fillStyle = sky;
+        sctx.fillRect(0, 0, scene.width, scene.height);
+
+        const light = computeLight();
+
+        // 1) 背景壁（Backwall）の描画
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const bw = backwall[r][c];
+            if (!bw) continue;
+            const x = c * CELL, y = r * CELL;
+            sctx.drawImage(bw === 1 ? BACKWALL_DIRT : BACKWALL_STONE, x, y, CELL, CELL);
+          }
+        }
+
+        // 2) テラリア風オートタイル本体＆外周輪郭・角丸・ハイライト
+        const E = 3; // 外周輪郭の太さ
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const id = grid[r][c];
+            if (!id) continue;
+            const b = BLOCK_MAP[id];
+            const x = c * CELL, y = r * CELL;
+
+            if (b.liquid) {
+              sctx.drawImage(TEXTURES[id], x, y, CELL, CELL);
+              if (id === 16) {
+                sctx.fillStyle = `rgba(185,238,255,${0.12 + Math.sin(sec * 3 + c) * 0.08})`;
+                sctx.fillRect(x, y, CELL, 5);
+              } else {
+                sctx.fillStyle = `rgba(255,220,100,${0.16 + Math.sin(sec * 4 + c) * 0.1})`;
+                sctx.fillRect(x + 4, y + 6, CELL - 8, 6);
+              }
+            } else {
+              const up = isSolid(r - 1, c);
+              const dn = isSolid(r + 1, c);
+              const lt = isSolid(r, c - 1);
+              const rt = isSolid(r, c + 1);
+
+              // テラリア風の角落とし（露出している角を3px丸くクリッピング）
+              sctx.save();
+              sctx.beginPath();
+              const tl = (!up && !lt) ? 4 : 0;
+              const tr = (!up && !rt) ? 4 : 0;
+              const br = (!dn && !rt) ? 4 : 0;
+              const bl = (!dn && !lt) ? 4 : 0;
+              sctx.moveTo(x + tl, y);
+              sctx.lineTo(x + CELL - tr, y);
+              if (tr) sctx.lineTo(x + CELL, y + tr);
+              sctx.lineTo(x + CELL, y + CELL - br);
+              if (br) sctx.lineTo(x + CELL - br, y + CELL);
+              sctx.lineTo(x + bl, y + CELL);
+              if (bl) sctx.lineTo(x, y + CELL - bl);
+              sctx.lineTo(x, y + tl);
+              sctx.closePath();
+              sctx.clip();
+
+              sctx.drawImage(TEXTURES[id], x, y, CELL, CELL);
+
+              // 空気に触れている辺だけに濃い輪郭線＋内側のハイライト/影（同種・隣接面はシームレス）
+              if (!up) {
+                sctx.fillStyle = b.edge; sctx.fillRect(x, y, CELL, E);
+                sctx.fillStyle = b.hi; sctx.fillRect(x, y + E, CELL, 2);
+              }
+              if (!dn) {
+                sctx.fillStyle = b.edge; sctx.fillRect(x, y + CELL - E, CELL, E);
+                sctx.fillStyle = 'rgba(0,0,0,0.28)'; sctx.fillRect(x, y + CELL - E - 2, CELL, 2);
+              }
+              if (!lt) {
+                sctx.fillStyle = b.edge; sctx.fillRect(x, y, E, CELL);
+              }
+              if (!rt) {
+                sctx.fillStyle = b.edge; sctx.fillRect(x + CELL - E, y, E, CELL);
+              }
+
+              // 採掘ヒビ
+              const dmg = damage.get(`${c},${r}`) || 0;
+              if (dmg > 0) sctx.drawImage(CRACKS[Math.min(3, dmg) - 1], x, y, CELL, CELL);
+              sctx.restore();
+
+              // 草付き土の露出上面に小さな草葉ドットを生やす
+              if (id === 1 && !up) {
+                sctx.fillStyle = '#4e963a';
+                sctx.fillRect(x + 6, y - 4, 3, 4);
+                sctx.fillRect(x + 18, y - 6, 3, 6);
+                sctx.fillRect(x + 27, y - 3, 3, 3);
+                sctx.fillStyle = '#7ed459';
+                sctx.fillRect(x + 18, y - 6, 3, 2);
+              }
+
+              // 鉱石のキラキラ光沢（テラリアのスパークル演出）
+              if ([6, 7, 8, 9, 10, 13].includes(id)) {
+                const phase = (sec * 1.8 + c * 0.9 + r * 1.3) % 3.2;
+                if (phase < 0.25) {
+                  sctx.fillStyle = 'rgba(255,255,255,0.85)';
+                  sctx.fillRect(x + 10, y + 10, 4, 4);
+                }
+              }
+            }
+
+            // テラリア風の深さ＆光源ライティング
+            const lv = Math.max(0.08, Math.min(1, light[r][c]));
+            if (lv < 0.99) {
+              sctx.fillStyle = `rgba(4, 6, 12, ${(1 - lv) * 0.88})`;
+              sctx.fillRect(x, y, CELL, CELL);
+            }
+
+            if (showGrid) {
+              sctx.strokeStyle = 'rgba(255,255,255,0.16)';
+              sctx.strokeRect(x + 0.5, y + 0.5, CELL - 1, CELL - 1);
+            }
+          }
+        }
+
+        // 3) 採掘の破片パーティクル
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          p.life -= dt;
+          p.vy += 320 * dt;
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          if (p.life <= 0) { particles.splice(i, 1); continue; }
+          sctx.fillStyle = p.color;
+          sctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
+        }
+
+        // 4) カーソル枠
+        if (hoverCell) {
+          sctx.strokeStyle = mode === 'dig' ? '#ffdf80' : '#8bf0aa';
+          sctx.lineWidth = 2;
+          sctx.strokeRect(hoverCell.c * CELL + 1, hoverCell.r * CELL + 1, CELL - 2, CELL - 2);
+          sctx.lineWidth = 1;
+        }
+
+        requestAnimationFrame(draw);
+      }
+
+      function cellFromEvent(e) {
+        const rect = scene.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * (scene.width / rect.width);
+        const y = (e.clientY - rect.top) * (scene.height / rect.height);
+        const c = Math.floor(x / CELL), r = Math.floor(y / CELL);
+        return (c >= 0 && c < COLS && r >= 0 && r < ROWS) ? { c, r } : null;
+      }
+
+      scene.addEventListener('pointermove', e => {
+        hoverCell = cellFromEvent(e);
+        if (!hoverCell) { $('hoverInfo').textContent = 'カーソル: -'; return; }
+        const id = grid[hoverCell.r][hoverCell.c];
+        $('hoverInfo').textContent = `カーソル: ${id ? BLOCK_MAP[id].name : (backwall[hoverCell.r][hoverCell.c] ? '背景壁（空洞）' : '空')}`;
+      });
+      scene.addEventListener('pointerleave', () => { hoverCell = null; $('hoverInfo').textContent = 'カーソル: -'; });
+      scene.addEventListener('pointerdown', e => {
+        const cell = cellFromEvent(e);
+        if (!cell) return;
+        const key = `${cell.c},${cell.r}`;
+        if (mode === 'place') {
+          grid[cell.r][cell.c] = selectedId;
+          damage.delete(key);
+        } else {
+          const id = grid[cell.r][cell.c];
+          if (!id) return;
+          spawnDust(cell.c, cell.r, BLOCK_MAP[id].dust);
+          const next = (damage.get(key) || 0) + 1;
+          if (next >= 4) { grid[cell.r][cell.c] = 0; damage.delete(key); }
+          else damage.set(key, next);
+        }
+      });
+
+      $('modeDig').addEventListener('click', () => { mode = 'dig'; syncButtons(); });
+      $('modePlace').addEventListener('click', () => { mode = 'place'; syncButtons(); });
+      $('lightDay').addEventListener('click', () => { lightMode = 'day'; syncButtons(); });
+      $('lightMid').addEventListener('click', () => { lightMode = 'mid'; syncButtons(); });
+      $('lightDeep').addEventListener('click', () => { lightMode = 'deep'; syncButtons(); });
+      $('toggleGrid').addEventListener('click', () => { showGrid = !showGrid; syncButtons(); });
+      $('resetBtn').addEventListener('click', buildDiorama);
+
+      window.addEventListener('load', () => {
+        buildTextures();
+        buildDiorama();
+        renderPalette();
+        renderZoom();
+        syncButtons();
+        requestAnimationFrame(draw);
+      });
+    })();
+  </script>
+</body>
+</html>

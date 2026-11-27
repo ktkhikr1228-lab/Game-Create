@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>こもれび鉱洞 — テラリア風ワールド全体＆連続流体試作</title>
+  <style>
+    :root {
+      --cobble-dark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%231e2228'/%3E%3Crect x='1' y='1' width='5' height='4' fill='%23303640'/%3E%3Crect x='7' y='1' width='7' height='5' fill='%23292e36'/%3E%3Crect x='1' y='6' width='6' height='4' fill='%23272c34'/%3E%3Crect x='8' y='7' width='7' height='4' fill='%23323842'/%3E%3Crect x='1' y='11' width='4' height='4' fill='%232f343d'/%3E%3Crect x='6' y='11' width='5' height='4' fill='%23252a31'/%3E%3Crect x='12' y='12' width='3' height='3' fill='%23333942'/%3E%3C/svg%3E");
+      --cobble-mid: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%23333942'/%3E%3Crect x='1' y='1' width='5' height='4' fill='%234c5360'/%3E%3Crect x='2' y='1' width='3' height='1' fill='%23606978'/%3E%3Crect x='7' y='1' width='7' height='5' fill='%23444b57'/%3E%3Crect x='1' y='6' width='6' height='4' fill='%23404752'/%3E%3Crect x='8' y='7' width='7' height='4' fill='%234e5663'/%3E%3Crect x='1' y='11' width='4' height='4' fill='%2349505c'/%3E%3Crect x='6' y='11' width='5' height='4' fill='%233b414c'/%3E%3Crect x='12' y='12' width='3' height='3' fill='%234f5764'/%3E%3C/svg%3E");
+      --cobble-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%23444b57'/%3E%3Crect x='1' y='1' width='5' height='4' fill='%23606876'/%3E%3Crect x='2' y='1' width='3' height='1' fill='%23788292'/%3E%3Crect x='7' y='1' width='7' height='5' fill='%23565e6b'/%3E%3Crect x='1' y='6' width='6' height='4' fill='%23505865'/%3E%3Crect x='8' y='7' width='7' height='4' fill='%23636c7a'/%3E%3Crect x='1' y='11' width='4' height='4' fill='%235c6472'/%3E%3Crect x='6' y='11' width='5' height='4' fill='%234c5360'/%3E%3Crect x='12' y='12' width='3' height='3' fill='%23646d7b'/%3E%3C/svg%3E");
+      --text: #f3f5f8;
+      --muted: #c2c9d4;
+      --pixel-out: inset 2px 2px 0 rgba(255,255,255,0.2), inset -2px -2px 0 rgba(0,0,0,0.55);
+      --pixel-in: inset 2px 2px 0 rgba(0,0,0,0.6), inset -2px -2px 0 rgba(255,255,255,0.14);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      padding: 8px 10px;
+      background-image: var(--cobble-dark);
+      background-size: 48px 48px;
+      image-rendering: pixelated;
+      color: var(--text);
+      font-family: "Inter", system-ui, -apple-system, "Hiragino Sans", "Yu Gothic", sans-serif;
+      font-size: 12px;
+      overflow: hidden;
+    }
+    @media (max-width: 780px) { body { overflow: auto; height: auto; } }
+    .app {
+      max-width: 1020px;
+      height: 100%;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .stone-panel {
+      background-image: var(--cobble-mid);
+      background-size: 48px 48px;
+      border: 2px solid #12151a;
+      box-shadow: var(--pixel-out), 0 3px 0 rgba(0,0,0,0.45);
+      position: relative;
+    }
+    .stone-panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: rgba(16, 19, 25, 0.44);
+      pointer-events: none;
+    }
+    .stone-panel > * { position: relative; z-index: 1; }
+
+    .topbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      padding: 6px 10px;
+    }
+    .row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+    button.btn {
+      background-image: var(--cobble-light);
+      background-size: 32px 32px;
+      color: #fff;
+      border: 2px solid #12151a;
+      box-shadow: var(--pixel-out);
+      padding: 4px 8px;
+      font-size: 11.5px;
+      font-weight: 700;
+      font-family: inherit;
+      cursor: pointer;
+      user-select: none;
+      text-shadow: 1px 1px 0 #111;
+    }
+    button.btn:hover { filter: brightness(1.12); }
+    button.btn:active { background-image: none; background-color: #20242c; box-shadow: var(--pixel-in); }
+    button.btn.active {
+      background-image: linear-gradient(180deg, #b86c28 0%, #7a3e14 100%);
+      border-color: #ffcf70;
+      color: #fff8e0;
+      box-shadow: inset 2px 2px 0 rgba(255,235,175,0.4), inset -2px -2px 0 rgba(55,20,0,0.7);
+    }
+    button.btn.water.active { background-image: linear-gradient(180deg, #2b82b8, #195175); border-color: #8ee0ff; }
+    button.btn.lava.active { background-image: linear-gradient(180deg, #d65020, #8a260a); border-color: #ffbe75; }
+
+    .stage-panel {
+      flex: 1 1 auto;
+      min-height: 0;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .hud-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      height: 24px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(14, 17, 23, 0.82);
+      border: 2px solid #12151a;
+      box-shadow: var(--pixel-in);
+      padding: 2px 8px;
+      font-size: 11.5px;
+      white-space: nowrap;
+    }
+    .pill.status {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--muted);
+    }
+    .canvas-wrap {
+      flex: 1 1 auto;
+      min-height: 260px;
+      background: #0d1118;
+      border: 2px solid #12151a;
+      box-shadow: var(--pixel-in);
+      position: relative;
+      overflow: hidden;
+      touch-action: none;
+    }
+    canvas#game {
+      width: 100%;
+      height: 100%;
+      display: block;
+      image-rendering: pixelated;
+      cursor: crosshair;
+      outline: none;
+    }
+    .bottom-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar stone-panel">
+      <div class="row">
+        <button id="warpTown" class="btn active" type="button">鉱山町</button>
+        <button id="warpSwamp" class="btn" type="button">沼地</button>
+        <button id="warpDunes" class="btn" type="button">歌う砂丘</button>
+        <button id="warpMagnet" class="btn" type="button">磁気の丘</button>
+        <button id="warpFalls" class="btn" type="button">逆さ滝・浮島</button>
+      </div>
+      <div class="row">
+        <button id="zoomNormal" class="btn active" type="button">探索ビュー</button>
+        <button id="zoomWide" class="btn" type="button">広域ビュー</button>
+        <button id="muteBtn" class="btn" type="button">音ON</button>
+        <button id="resetBtn" class="btn" type="button">再生成</button>
+      </div>
+    </header>
+
+    <section class="stage-panel stone-panel">
+      <div class="hud-line">
+        <span id="biomePill" class="pill">現在地: 鉱山町と草原</span>
+        <span id="statusPill" class="pill status">A/D 移動・Space ジャンプ/泳ぐ・左クリック 採掘/配置</span>
+        <span class="pill">黒曜石 <strong id="cntObs">0</strong></span>
+        <span class="pill">鉱石 <strong id="cntOre">0</strong></span>
+      </div>
+
+      <div class="canvas-wrap">
+        <canvas id="game" width="900" height="450" tabindex="0"></canvas>
+      </div>
+
+      <div class="bottom-bar">
+        <div class="row">
+          <button id="toolPick" class="btn active" type="button">1 掘る</button>
+          <button id="toolWood" class="btn" type="button">2 坑木</button>
+          <button id="toolWater" class="btn water" type="button">3 水を流す</button>
+          <button id="toolLava" class="btn lava" type="button">4 溶岩を流す</button>
+          <button id="toolSand" class="btn" type="button">5 砂を落とす</button>
+        </div>
+        <div class="row">
+          <button id="tLeft" class="btn" type="button">◀</button>
+          <button id="tRight" class="btn" type="button">▶</button>
+          <button id="tJump" class="btn" type="button">▲</button>
+          <button id="tAct" class="btn" type="button">掘/置</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (() => {
+      const TILE = 18;
+      const COLS = 96;
+      const ROWS = 34;
+
+      // 固体タイルのみ tiles[][] に保存（液体は liqType[][] + liqAmt[][] で連続管理！）
+      const EMPTY = 0, GRASS = 1, DIRT = 2, MUD = 3, STONE = 4, HARD = 5;
+      const COPPER = 6, TIN = 7, IRON = 8, MAGNET = 9, FLOAT = 10;
+      const SAND = 11, SANDSTONE = 12, NITER = 13, OBSIDIAN = 14, WOOD = 15;
+
+      const LIQ_NONE = 0, LIQ_WATER = 1, LIQ_LAVA = 2;
+
+      const META = {
+        [GRASS]:     { name: '草付き土', edge: '#233b1e', hi: '#78c257', dust: '#7a5233' },
+        [DIRT]:      { name: '土',       edge: '#3d2515', hi: '#a37148', dust: '#875a38' },
+        [MUD]:       { name: 'ぬかるみ', edge: '#1e1c14', hi: '#606e4d', dust: '#4a4332' },
+        [STONE]:     { name: '岩',       edge: '#242933', hi: '#8d98ab', dust: '#6c7585' },
+        [HARD]:      { name: '硬い岩盤', edge: '#15181f', hi: '#6a7487', dust: '#4a5261' },
+        [COPPER]:    { name: '銅鉱石',   edge: '#2b1b14', hi: '#f2a463', dust: '#d97a43', ore: true },
+        [TIN]:       { name: '錫石',     edge: '#212b33', hi: '#d6eefc', dust: '#9eb8c7', ore: true },
+        [IRON]:      { name: '赤鉄鉱',   edge: '#2b1414', hi: '#e38074', dust: '#b0423a', ore: true },
+        [MAGNET]:    { name: '磁鉄鉱',   edge: '#191326', hi: '#cbb0ff', dust: '#8c69c9', ore: true },
+        [FLOAT]:     { name: '浮遊鉱',   edge: '#12313b', hi: '#b5ffff', dust: '#5ce6f5', ore: true, glow: true },
+        [SAND]:      { name: '砂',       edge: '#6e5124', hi: '#fae5aa', dust: '#e0be72' },
+        [SANDSTONE]: { name: '砂岩',     edge: '#47301a', hi: '#c99b63', dust: '#a67a49' },
+        [NITER]:     { name: '硝石',     edge: '#423527', hi: '#ffffff', dust: '#dce8f2', ore: true },
+        [OBSIDIAN]:  { name: '黒曜石',   edge: '#0e0a17', hi: '#9c78d4', dust: '#4a356e' },
+        [WOOD]:      { name: '坑木',     edge: '#2e1c0c', hi: '#c79963', dust: '#9e703f' }
+      };
+
+      // ===== 効果音 =====
+      let audioCtx = null, muted = false;
+      const ensureAudio = () => {
+        if (muted) return null;
+        if (!audioCtx) { const C = window.AudioContext || window.webkitAudioContext; if (C) audioCtx = new C(); }
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+        return audioCtx;
+      };
+      const tone = (f1, dur, type = 'triangle', vol = 0.05, f2 = null) => {
+        const c = ensureAudio(); if (!c) return;
+        const now = c.currentTime, o = c.createOscillator(), g = c.createGain();
+        o.type = type; o.frequency.setValueAtTime(f1, now);
+        if (f2) o.frequency.exponentialRampToValueAtTime(Math.max(25, f2), now + dur);
+        g.gain.setValueAtTime(vol, now); g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+        o.connect(g); g.connect(c.destination); o.start(now); o.stop(now + dur);
+      };
+      const SFX = {
+        dig: () => tone(210 + Math.random() * 40, 0.05, 'square', 0.04, 120),
+        brk: () => tone(340 + Math.random() * 60, 0.09, 'triangle', 0.07, 170),
+        place: () => tone(190, 0.06, 'sine', 0.05, 260),
+        hiss: () => tone(680, 0.13, 'sawtooth', 0.05, 180)
+      };
+
+      // ===== 16x16 テラリア風ドット絵テクスチャ =====
+      function rng(seed) {
+        let s = seed >>> 0;
+        return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+      }
+      function makeTex(fn) {
+        const c = document.createElement('canvas'); c.width = 16; c.height = 16;
+        const g = c.getContext('2d'); g.imageSmoothingEnabled = false; fn(g); return c;
+      }
+      const px = (g, x, y, col, w = 1, h = 1) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+
+      function drawOrganic(g, seed, d, m, l) {
+        const r = rng(seed);
+        px(g, 0, 0, m, 16, 16);
+        for (let i = 0; i < 14; i++) {
+          px(g, Math.floor(r() * 14), Math.floor(r() * 14), r() > 0.5 ? d : l, 2 + Math.floor(r() * 3), 2 + Math.floor(r() * 2));
+        }
+        for (let i = 0; i < 8; i++) px(g, Math.floor(r() * 15), Math.floor(r() * 15), r() > 0.5 ? l : d, 1, 1);
+      }
+      function drawOre(g, seed, out, mid, hi, sp) {
+        const r = rng(seed);
+        for (const [x, y, w, h] of [[2,2,4,4],[9,1,5,4],[1,9,5,5],[8,8,6,5]]) {
+          const ox = (x + Math.floor(r() * 2)) % 12, oy = (y + Math.floor(r() * 2)) % 12;
+          px(g, ox, oy, out, w, h);
+          px(g, ox + 1, oy + 1, mid, Math.max(1, w - 2), Math.max(1, h - 2));
+          px(g, ox + 1, oy + 1, hi, Math.max(1, w - 3), 1);
+          px(g, ox + 1, oy + 1, sp, 1, 1);
+        }
+      }
+
+      const TEX = {};
+      let BW_DIRT, BW_STONE;
+
+      function buildTextures() {
+        TEX[GRASS] = makeTex(g => {
+          drawOrganic(g, 11, '#6b4428', '#875836', '#a36e46');
+          px(g, 0, 0, '#3a7832', 16, 4); px(g, 0, 0, '#5ea844', 16, 2);
+          px(g, 2, 4, '#2d5e27', 3, 2); px(g, 10, 4, '#2d5e27', 4, 1);
+        });
+        TEX[DIRT] = makeTex(g => drawOrganic(g, 22, '#6b4428', '#875836', '#a36e46'));
+        TEX[MUD] = makeTex(g => drawOrganic(g, 33, '#2e2a1f', '#423c2d', '#55543e'));
+        TEX[STONE] = makeTex(g => drawOrganic(g, 44, '#525b6b', '#697487', '#8490a6'));
+        TEX[HARD] = makeTex(g => drawOrganic(g, 55, '#2b303b', '#3d4454', '#545e73'));
+        TEX[COPPER] = makeTex(g => { drawOrganic(g, 66, '#525b6b', '#697487', '#8490a6'); drawOre(g, 606, '#5c2c16', '#cf6e36', '#f2a463', '#7de0b6'); });
+        TEX[TIN] = makeTex(g => { drawOrganic(g, 77, '#4c5563', '#636e80', '#7c889c'); drawOre(g, 707, '#3f505c', '#8ea8b8', '#cce3f0', '#ffffff'); });
+        TEX[IRON] = makeTex(g => { drawOrganic(g, 88, '#444b57', '#5a6270', '#717a8a'); drawOre(g, 808, '#4a1816', '#a83c36', '#de7668', '#ffd4c4'); });
+        TEX[MAGNET] = makeTex(g => { drawOrganic(g, 99, '#2c253d', '#3f3657', '#554a73'); drawOre(g, 909, '#24173b', '#7b5ab5', '#b594f2', '#f0e6ff'); });
+        TEX[FLOAT] = makeTex(g => { drawOrganic(g, 110, '#1d3742', '#2b4f5e', '#3d6b7d'); drawOre(g, 1010, '#104e5c', '#2cc4d6', '#8cf7ff', '#ffffff'); });
+        TEX[SAND] = makeTex(g => { drawOrganic(g, 121, '#c49b52', '#deb86d', '#f2d694'); px(g, 2, 4, '#fae6b4', 5, 1); px(g, 9, 11, '#fae6b4', 5, 1); });
+        TEX[SANDSTONE] = makeTex(g => {
+          const b = ['#a87d4e','#91683d','#b58a59','#7d5730'];
+          for (let y = 0; y < 16; y++) px(g, 0, y, b[Math.floor(y / 2) % 4], 16, 1);
+        });
+        TEX[NITER] = makeTex(g => { g.drawImage(TEX[SANDSTONE], 0, 0); drawOre(g, 1313, '#6e655a', '#c9d7e3', '#eef7ff', '#ffffff'); });
+        TEX[OBSIDIAN] = makeTex(g => { drawOrganic(g, 144, '#181224', '#261d38', '#3c2e57'); px(g, 2, 3, '#7254a3', 3, 2); px(g, 9, 8, '#8d6bc4', 3, 2); });
+        TEX[WOOD] = makeTex(g => {
+          [0, 4, 8, 12].forEach((y, i) => {
+            px(g, 0, y, i % 2 ? '#8f653a' : '#9c7042', 16, 3);
+            px(g, 0, y, '#b58653', 16, 1);
+            px(g, 0, y + 3, '#54381c', 16, 1);
+          });
+          px(g, 5, 0, '#54381c', 1, 4); px(g, 12, 4, '#54381c', 1, 4);
+        });
+        BW_DIRT = makeTex(g => drawOrganic(g, 201, '#26180f', '#332014', '#40291b'));
+        BW_STONE = makeTex(g => drawOrganic(g, 202, '#181c24', '#212630', '#2a303d'));
+      }
+
+      const CRACKS = [1, 2, 3].map(st => makeTex(g => {
+        if (st >= 1) { px(g, 7, 6, '#0d0f14', 2, 2); px(g, 6, 8, '#0d0f14', 2, 1); }
+        if (st >= 2) { px(g, 4, 4, '#0d0f14', 3, 1); px(g, 9, 8, '#0d0f14', 3, 1); px(g, 5, 9, '#0d0f14', 1, 3); }
+        if (st >= 3) { px(g, 2, 2, '#0d0f14', 3, 1); px(g, 11, 9, '#0d0f14', 3, 2); px(g, 3, 11, '#0d0f14', 3, 2); }
+      }));
+
+      // ===== ワールド状態（連続水量 liqType + liqAmt） =====
+      let tiles = [], backwall = [], liqType = [], liqAmt = [];
+      let cracks = new Map(), particles = [], waterfalls = [];
+      let island = null, player = null;
+      let tool = 'pick', zoomScale = 1.5, obsCount = 0, oreCount = 0;
+      let sandAcc = 0, waterAcc = 0, lavaAcc = 0, simParity = 0;
+      let actCd = 0, coyote = 0, jumpBuf = 0, prevJump = false, hudTick = 0, prevTs = 0;
+      let camera = { x: 0, y: 0 };
+
+      const keys = new Set(), pointer = { down: false, x: 450, y: 225 }, touch = { left: false, right: false, jump: false, act: false };
+
+      function biomeAt(col) {
+        if (col < 18) return '鉱山町と草原';
+        if (col < 35) return '沼地（水没・再生鉱床）';
+        if (col < 55) return '歌う砂丘（オアシス・地下溶岩）';
+        if (col < 74) return '磁気の丘';
+        return '逆さ滝の谷＆動く浮島';
+      }
+
+      function setLiquid(r, c, type, amt = 1.0) {
+        if (r < 0 || r >= ROWS || c < 0 || c >= COLS || tiles[r][c] !== EMPTY) return;
+        liqType[r][c] = type;
+        liqAmt[r][c] = Math.max(0, Math.min(1, amt));
+      }
+
+      function buildWorld() {
+        tiles = Array.from({ length: ROWS }, () => Array(COLS).fill(EMPTY));
+        backwall = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+        liqType = Array.from({ length: ROWS }, () => Array(COLS).fill(LIQ_NONE));
+        liqAmt = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+        cracks = new Map();
+        particles = [];
+
+        const r = rng(20261127);
+
+        for (let c = 0; c < COLS; c++) {
+          let surf = 13;
+          if (c < 18) surf = 13;
+          else if (c < 35) surf = (c >= 21 && c <= 32) ? 15 : 13;
+          else if (c < 55) surf = 14 - Math.round(Math.max(0, 3.2 - Math.abs(c - 44) * 0.45));
+          else if (c < 74) surf = 14 - Math.round(Math.max(0, 4.5 - Math.abs(c - 64) * 0.55));
+          else surf = (c >= 78 && c <= 91) ? 17 : 14;
+
+          for (let row = surf; row < ROWS; row++) {
+            if (row >= surf + 1) backwall[row][c] = (row < surf + 4 && c < 35) ? 1 : 2;
+            if (c < 18) tiles[row][c] = row === surf ? GRASS : (row < surf + 3 ? DIRT : (row >= 29 ? HARD : STONE));
+            else if (c < 35) tiles[row][c] = row === surf ? MUD : (row < surf + 3 ? DIRT : (row >= 29 ? HARD : STONE));
+            else if (c < 55) tiles[row][c] = row < surf + 3 ? SAND : (row < surf + 6 ? SANDSTONE : (row >= 29 ? HARD : STONE));
+            else tiles[row][c] = row >= 29 ? HARD : STONE;
+          }
+        }
+
+        // 沼地の浅い水たまり（しっかり岸で囲まれて水平に溜まる）
+        for (let c = 21; c <= 32; c++) setLiquid(14, c, LIQ_WATER, 0.85);
+
+        // 歌う砂丘のオアシス池（底を掘ると下の空洞の溶岩へ水が流れ落ちる！）
+        for (let c = 38; c <= 42; c++) {
+          tiles[13][c] = EMPTY; tiles[14][c] = EMPTY;
+          setLiquid(13, c, LIQ_WATER, 0.9);
+          setLiquid(14, c, LIQ_WATER, 1.0);
+        }
+        // オアシス直下の空洞＋溶岩だまり
+        for (let c = 37; c <= 48; c++) {
+          tiles[19][c] = EMPTY; tiles[20][c] = EMPTY; tiles[21][c] = EMPTY; tiles[22][c] = EMPTY;
+        }
+        for (let c = 39; c <= 47; c++) {
+          setLiquid(21, c, LIQ_LAVA, 0.85);
+          setLiquid(22, c, LIQ_LAVA, 1.0);
+        }
+
+        // 地下の自然洞窟＆地底溶岩湖・地下水脈
+        const caves = [[10, 19, 16, 22], [24, 21, 31, 24], [58, 17, 69, 20], [20, 26, 36, 29], [52, 25, 68, 29]];
+        for (const [x0, y0, x1, y1] of caves) {
+          for (let row = y0; row <= y1; row++) for (let c = x0; c <= x1; c++) tiles[row][c] = EMPTY;
+        }
+        for (let c = 53; c <= 67; c++) {
+          setLiquid(28, c, LIQ_LAVA, 0.9);
+          setLiquid(29, c, LIQ_LAVA, 1.0);
+        }
+        for (let c = 24; c <= 31; c++) setLiquid(24, c, LIQ_WATER, 1.0);
+
+        // 鉱脈
+        for (let row = 16; row < 29; row++) {
+          for (let c = 2; c < COLS - 2; c++) {
+            if (tiles[row][c] !== STONE && tiles[row][c] !== SANDSTONE) continue;
+            const v = r();
+            if (c < 30 && row < 23 && v < 0.06) tiles[row][c] = COPPER;
+            else if (c >= 16 && c < 42 && row >= 19 && row < 27 && v < 0.05) tiles[row][c] = TIN;
+            else if (row >= 23 && v < 0.05) tiles[row][c] = IRON;
+            else if (c >= 36 && c < 54 && tiles[row][c] === SANDSTONE && v < 0.09) tiles[row][c] = NITER;
+            else if (c >= 56 && c < 72 && row < 24 && v < 0.08) tiles[row][c] = MAGNET;
+          }
+        }
+
+        waterfalls = [{ x0: 79, x1: 81, y0: 4, y1: 17 }, { x0: 88, x1: 90, y0: 4, y1: 17 }];
+
+        const iw = 10, ih = 4;
+        const igrid = Array.from({ length: ih }, () => Array(iw).fill(EMPTY));
+        for (let c = 1; c <= 8; c++) igrid[1][c] = STONE;
+        for (let c = 2; c <= 7; c++) igrid[2][c] = STONE;
+        for (let c = 4; c <= 5; c++) igrid[3][c] = STONE;
+        igrid[1][3] = FLOAT; igrid[1][6] = FLOAT; igrid[2][4] = FLOAT;
+        island = { cols: iw, rows: ih, grid: igrid, x: 76 * TILE, y: 5 * TILE, minX: 73 * TILE, maxX: 84 * TILE, dir: 1, dx: 0 };
+
+        player = { x: 8 * TILE, y: 10 * TILE, w: 13, h: 28, vx: 0, vy: 0, grounded: false, onIsland: false, facing: 1 };
+        obsCount = 0; oreCount = 0;
+        syncUI();
+      }
+
+      // ===== 連続流体シミュレーション（テラリア方式：振動ゼロ・滑らかな水平化） =====
+      function spawnParticle(x, y, color, vy = -50, count = 4) {
+        for (let i = 0; i < count; i++) {
+          particles.push({
+            x: x + (Math.random() - 0.5) * 10,
+            y: y + (Math.random() - 0.5) * 10,
+            vx: (Math.random() - 0.5) * 55,
+            vy: vy - Math.random() * 45,
+            size: 2 + Math.floor(Math.random() * 2),
+            color,
+            life: 0.45
+          });
+        }
+      }
+
+      function solidifyContact(r, c, nr, nc) {
+        // 溶岩側を黒曜石に固め、水側を消費する
+        const t1 = liqType[r][c], t2 = liqType[nr][nc];
+        if ((t1 === LIQ_WATER && t2 === LIQ_LAVA) || (t1 === LIQ_LAVA && t2 === LIQ_WATER)) {
+          const lr = t1 === LIQ_LAVA ? r : nr, lc = t1 === LIQ_LAVA ? c : nc;
+          const wr = t1 === LIQ_WATER ? r : nr, wc = t1 === LIQ_WATER ? c : nc;
+          tiles[lr][lc] = OBSIDIAN;
+          liqType[lr][lc] = LIQ_NONE; liqAmt[lr][lc] = 0;
+          liqAmt[wr][wc] = Math.max(0, liqAmt[wr][wc] - 0.55);
+          if (liqAmt[wr][wc] < 0.04) { liqType[wr][wc] = LIQ_NONE; liqAmt[wr][wc] = 0; }
+          spawnParticle(lc * TILE + 9, lr * TILE + 6, '#eef6ff', -75, 5);
+          SFX.hiss();
+          return true;
+        }
+        return false;
+      }
+
+      function stepContinuousLiquid(targetType, flowRate) {
+        simParity ^= 1;
+        // 下から上へ走査：1) 真下へ落下、2) 左右へ均等化
+        for (let r = ROWS - 2; r >= 0; r--) {
+          const cs = simParity ? 1 : COLS - 2;
+          const ce = simParity ? COLS - 1 : 0;
+          const st = simParity ? 1 : -1;
+          for (let c = cs; c !== ce; c += st) {
+            if (tiles[r][c] !== EMPTY || liqType[r][c] !== targetType) continue;
+            let amt = liqAmt[r][c];
+            if (amt < 0.025) { liqType[r][c] = LIQ_NONE; liqAmt[r][c] = 0; continue; }
+
+            // 1) 真下へ流し込む
+            if (tiles[r + 1][c] === EMPTY) {
+              const bt = liqType[r + 1][c];
+              if (bt !== LIQ_NONE && bt !== targetType) {
+                if (solidifyContact(r, c, r + 1, c)) continue;
+              } else {
+                const space = 1.0 - liqAmt[r + 1][c];
+                if (space > 0.001) {
+                  const move = Math.min(amt, space, flowRate * 1.6);
+                  liqType[r + 1][c] = targetType;
+                  liqAmt[r + 1][c] += move;
+                  amt -= move;
+                  liqAmt[r][c] = amt;
+                  if (amt < 0.025) { liqType[r][c] = LIQ_NONE; liqAmt[r][c] = 0; continue; }
+                }
+              }
+            }
+
+            // 2) 左右へ均等化（水面の高さ差を滑らかに埋める）
+            const dirs = simParity ? [1, -1] : [-1, 1];
+            for (const dc of dirs) {
+              const nc = c + dc;
+              if (nc < 0 || nc >= COLS || tiles[r][nc] !== EMPTY) continue;
+              const nt = liqType[r][nc];
+              if (nt !== LIQ_NONE && nt !== targetType) {
+                if (solidifyContact(r, c, r, nc)) break;
+                continue;
+              }
+              const diff = amt - liqAmt[r][nc];
+              if (diff > 0.015) {
+                const move = Math.min(diff * 0.42, flowRate);
+                liqType[r][nc] = targetType;
+                liqAmt[r][nc] += move;
+                amt -= move;
+                liqAmt[r][c] = amt;
+              }
+            }
+            if (liqAmt[r][c] < 0.025) { liqType[r][c] = LIQ_NONE; liqAmt[r][c] = 0; }
+          }
+        }
+      }
+
+      // 砂の重力（水や溶岩の中へも沈む）
+      function stepSand() {
+        simParity ^= 1;
+        for (let r = ROWS - 2; r >= 0; r--) {
+          const cs = simParity ? 1 : COLS - 2, ce = simParity ? COLS - 1 : 0, st = simParity ? 1 : -1;
+          for (let c = cs; c !== ce; c += st) {
+            if (tiles[r][c] !== SAND) continue;
+            const dropInto = (nr, nc) => {
+              const displacedType = liqType[nr][nc], displacedAmt = liqAmt[nr][nc];
+              tiles[nr][nc] = SAND; liqType[nr][nc] = LIQ_NONE; liqAmt[nr][nc] = 0;
+              tiles[r][c] = EMPTY; liqType[r][c] = displacedType; liqAmt[r][c] = displacedAmt;
+            };
+            if (tiles[r + 1][c] === EMPTY) { dropInto(r + 1, c); continue; }
+            const d1 = simParity ? 1 : -1, d2 = -d1;
+            if (tiles[r + 1][c + d1] === EMPTY && tiles[r][c + d1] === EMPTY) { dropInto(r + 1, c + d1); continue; }
+            if (tiles[r + 1][c + d2] === EMPTY && tiles[r][c + d2] === EMPTY) { dropInto(r + 1, c + d2); }
+          }
+        }
+      }
+
+      // ===== 衝突・移動 =====
+      const isSolid = (r, c) => (c < 0 || c >= COLS || r >= ROWS) ? true : (r < 0 ? false : tiles[r][c] !== EMPTY);
+
+      function solidRectsNear(x, y, w, h) {
+        const out = [];
+        const c0 = Math.floor(x / TILE) - 1, c1 = Math.floor((x + w) / TILE) + 1;
+        const r0 = Math.floor(y / TILE) - 1, r1 = Math.floor((y + h) / TILE) + 1;
+        for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+          if (isSolid(r, c)) out.push({ x: c * TILE, y: r * TILE, w: TILE, h: TILE, isl: false });
+        }
+        const ic0 = Math.max(0, Math.floor((x - island.x) / TILE) - 1);
+        const ic1 = Math.min(island.cols - 1, Math.floor((x + w - island.x) / TILE) + 1);
+        const ir0 = Math.max(0, Math.floor((y - island.y) / TILE) - 1);
+        const ir1 = Math.min(island.rows - 1, Math.floor((y + h - island.y) / TILE) + 1);
+        for (let r = ir0; r <= ir1; r++) for (let c = ic0; c <= ic1; c++) {
+          if (island.grid[r][c] !== EMPTY) out.push({ x: island.x + c * TILE, y: island.y + r * TILE, w: TILE, h: TILE, isl: true });
+        }
+        return out;
+      }
+      const ov = (x, y, w, h, b) => x < b.x + b.w && x + w > b.x && y < b.y + b.h && y + h > b.y;
+
+      function movePlayer(dx, dy) {
+        player.x += dx;
+        for (const r of solidRectsNear(player.x, player.y, player.w, player.h)) {
+          if (ov(player.x, player.y, player.w, player.h, r)) {
+            player.x = dx > 0 ? r.x - player.w : r.x + r.w; player.vx = 0;
+          }
+        }
+        player.y += dy; player.grounded = false; player.onIsland = false;
+        for (const r of solidRectsNear(player.x, player.y, player.w, player.h)) {
+          if (ov(player.x, player.y, player.w, player.h, r)) {
+            if (dy >= 0) { player.y = r.y - player.h; player.grounded = true; if (r.isl) player.onIsland = true; }
+            else player.y = r.y + r.h;
+            player.vy = 0;
+          }
+        }
+      }
+
+      const worldPtr = () => ({ x: pointer.x / zoomScale + camera.x, y: pointer.y / zoomScale + camera.y });
+
+      function act() {
+        if (actCd > 0) return;
+        const pcx = player.x + player.w / 2, pcy = player.y + player.h / 2;
+        const tgt = touch.act ? { x: pcx + player.facing * 24, y: pcy + 4 } : worldPtr();
+        if (Math.hypot(tgt.x - pcx, tgt.y - pcy) > 7.5 * TILE) return;
+        const c = Math.floor(tgt.x / TILE), r = Math.floor(tgt.y / TILE);
+        if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return;
+
+        if (tool !== 'pick') {
+          if (tool === 'wood' || tool === 'sand') {
+            if (tiles[r][c] !== EMPTY) return;
+            if (ov(player.x, player.y, player.w, player.h, { x: c * TILE, y: r * TILE, w: TILE, h: TILE })) return;
+            tiles[r][c] = tool === 'wood' ? WOOD : SAND;
+            liqType[r][c] = LIQ_NONE; liqAmt[r][c] = 0;
+            actCd = 0.09; SFX.place(); return;
+          }
+          if (tiles[r][c] !== EMPTY) return;
+          const lt = tool === 'water' ? LIQ_WATER : LIQ_LAVA;
+          if (liqType[r][c] !== LIQ_NONE && liqType[r][c] !== lt) {
+            tiles[r][c] = OBSIDIAN; liqType[r][c] = LIQ_NONE; liqAmt[r][c] = 0;
+            spawnParticle(c * TILE + 9, r * TILE + 6, '#eef6ff', -75, 5);
+            SFX.hiss();
+          } else {
+            liqType[r][c] = lt;
+            liqAmt[r][c] = Math.min(1.0, liqAmt[r][c] + 0.9);
+            SFX.place();
+          }
+          actCd = 0.07; return;
+        }
+
+        // 浮島またはワールドの採掘
+        const ic = Math.floor((tgt.x - island.x) / TILE), ir = Math.floor((tgt.y - island.y) / TILE);
+        if (ic >= 0 && ic < island.cols && ir >= 0 && ir < island.rows && island.grid[ir][ic] !== EMPTY) {
+          const id = island.grid[ir][ic];
+          island.grid[ir][ic] = EMPTY;
+          spawnParticle(island.x + ic * TILE + 9, island.y + ir * TILE + 9, META[id].dust, -50, 6);
+          if (META[id].ore) oreCount++;
+          actCd = 0.14; SFX.brk(); syncUI(); return;
+        }
+
+        const id = tiles[r][c];
+        if (id === EMPTY) return;
+        actCd = 0.12;
+        spawnParticle(c * TILE + 9, r * TILE + 9, META[id].dust, -45, 4);
+        const need = (id === DIRT || id === GRASS || id === SAND || id === MUD || id === WOOD) ? 1 : 2;
+        const key = `${c},${r}`, h = (cracks.get(key) || 0) + 1;
+        if (h < need) { cracks.set(key, h); SFX.dig(); return; }
+        cracks.delete(key); tiles[r][c] = EMPTY; SFX.brk();
+        if (id === OBSIDIAN) obsCount++;
+        if (META[id].ore) oreCount++;
+        syncUI();
+      }
+
+      // ===== 可視範囲テラリア風ライティング =====
+      function computeVisibleLight(c0, c1, r0, r1) {
+        const w = c1 - c0 + 1, h = r1 - r0 + 1;
+        const L = Array.from({ length: h }, () => Array(w).fill(0));
+        const q = [];
+        const pc = Math.floor((player.x + player.w / 2) / TILE);
+        const pr = Math.floor((player.y + player.h / 2) / TILE);
+
+        for (let r = r0; r <= r1; r++) {
+          for (let c = c0; c <= c1; c++) {
+            const id = tiles[r][c];
+            let lv = 0;
+            if (id === EMPTY && backwall[r][c] === 0) lv = 1.0;
+            else if (id === EMPTY && backwall[r][c] > 0) lv = 0.42;
+            else if (META[id] && META[id].glow) lv = 1.0;
+            if (liqType[r][c] === LIQ_LAVA && liqAmt[r][c] > 0.1) lv = 1.0;
+            if (Math.hypot(c - pc, r - pr) <= 2.2) lv = Math.max(lv, 0.92);
+            if (lv > 0) { L[r - r0][c - c0] = lv; q.push([r - r0, c - c0, lv]); }
+          }
+        }
+        let head = 0;
+        while (head < q.length) {
+          const [lr, lc, lv] = q[head++];
+          if (lv < L[lr][lc] - 0.001) continue;
+          for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+            const nr = lr + dr, nc = lc + dc;
+            if (nr < 0 || nr >= h || nc < 0 || nc >= w) continue;
+            const decay = isSolid(r0 + nr, c0 + nc) ? 0.22 : 0.09;
+            const nl = lv - decay;
+            if (nl > L[nr][nc]) { L[nr][nc] = nl; q.push([nr, nc, nl]); }
+          }
+        }
+        return L;
+      }
+
+      // ===== 連続水量ベースの滑らかな液体描画（継ぎ目・点滅ゼロ） =====
+      function drawContinuousLiquid(ctx, r, c, x, y, sec) {
+        const type = liqType[r][c];
+        const amt = liqAmt[r][c];
+        if (type === LIQ_NONE || amt < 0.025) return;
+
+        // 上のマスにも同じ液体がある（落下中 or 水中）なら隙間なく満タン表示
+        const aboveSame = r > 0 && liqType[r - 1][c] === type && liqAmt[r - 1][c] > 0.05;
+        const fillH = aboveSame ? TILE : Math.max(2, Math.round(TILE * amt));
+        const wave = (!aboveSame && amt > 0.25) ? Math.round(Math.sin(sec * 4.2 + c * 0.75) * 0.8) : 0;
+        const topY = Math.max(y, y + TILE - fillH + wave);
+        const drawH = (y + TILE) - topY;
+        if (drawH <= 0) return;
+
+        if (type === LIQ_WATER) {
+          ctx.fillStyle = 'rgba(34, 138, 212, 0.72)';
+          ctx.fillRect(x, topY, TILE, drawH);
+
+          // 落下中の滝筋 or 横に流れる光の筋
+          if (aboveSame && amt < 0.95) {
+            const fy = Math.floor((sec * 48 + c * 5) % TILE);
+            ctx.fillStyle = 'rgba(195, 240, 255, 0.45)';
+            ctx.fillRect(x + 4, y + (fy % (TILE - 4)), 2, 4);
+            ctx.fillRect(x + 12, y + ((fy + 9) % (TILE - 4)), 2, 4);
+          } else if (drawH >= 6) {
+            const fx = Math.floor((sec * 18 + r * 7) % (TILE - 4));
+            ctx.fillStyle = 'rgba(155, 228, 255, 0.30)';
+            ctx.fillRect(x + fx, topY + 3, 4, 2);
+          }
+          if (!aboveSame) {
+            ctx.fillStyle = 'rgba(195, 244, 255, 0.9)';
+            ctx.fillRect(x, topY, TILE, 2);
+          }
+        } else {
+          // 溶岩：うねるマグマ脈＋表面ハイライト＋火の粉
+          ctx.fillStyle = '#cf3911';
+          ctx.fillRect(x, topY, TILE, drawH);
+          if (drawH >= 5) {
+            const flow = Math.floor((sec * 10 + r * 5) % (TILE - 5));
+            ctx.fillStyle = '#ff922b';
+            ctx.fillRect(x + flow, topY + 3, 5, Math.min(3, drawH - 3));
+            ctx.fillStyle = '#fff099';
+            ctx.fillRect(x + flow + 1, topY + 3, 2, 1);
+          }
+          if (!aboveSame) {
+            ctx.fillStyle = '#ffd866';
+            ctx.fillRect(x, topY, TILE, 2);
+            if (amt > 0.4 && Math.sin(sec * 3.5 + c * 2.7) > 0.88) {
+              ctx.fillStyle = '#ffeb85';
+              ctx.fillRect(x + ((c * 5) % 12) + 2, topY - 3, 2, 2);
+            }
+          }
+        }
+      }
+
+      // ===== 描画＆更新 =====
+      const $ = id => document.getElementById(id);
+      const canvas = $('game'), ctx = canvas.getContext('2d');
+
+      function syncUI() {
+        $('cntObs').textContent = obsCount;
+        $('cntOre').textContent = oreCount;
+        ['toolPick','toolWood','toolWater','toolLava','toolSand'].forEach((id, i) => {
+          $(id).classList.toggle('active', tool === ['pick','wood','water','lava','sand'][i]);
+        });
+        $('zoomNormal').classList.toggle('active', zoomScale === 1.5);
+        $('zoomWide').classList.toggle('active', zoomScale === 1.0);
+      }
+
+      function update(dt) {
+        if (actCd > 0) actCd = Math.max(0, actCd - dt);
+
+        // 連続流体（水は滑らか、溶岩は粘性あり）＋砂の重力
+        sandAcc += dt; if (sandAcc >= 0.06) { sandAcc = 0; stepSand(); }
+        waterAcc += dt; if (waterAcc >= 0.05) { waterAcc = 0; stepContinuousLiquid(LIQ_WATER, 0.34); }
+        lavaAcc += dt; if (lavaAcc >= 0.11) { lavaAcc = 0; stepContinuousLiquid(LIQ_LAVA, 0.18); }
+
+        // 浮島漂流
+        const prevIx = island.x;
+        island.x += island.dir * 22 * dt;
+        if (island.x <= island.minX) { island.x = island.minX; island.dir = 1; }
+        if (island.x >= island.maxX) { island.x = island.maxX; island.dir = -1; }
+        island.dx = island.x - prevIx;
+        if (player.onIsland) player.x += island.dx;
+
+        // プレイヤー移動
+        const mL = keys.has('KeyA') || keys.has('ArrowLeft') || touch.left;
+        const mR = keys.has('KeyD') || keys.has('ArrowRight') || touch.right;
+        const jK = keys.has('Space') || keys.has('KeyW') || keys.has('ArrowUp') || touch.jump;
+        const dir = (mR ? 1 : 0) - (mL ? 1 : 0);
+        if (dir) player.facing = dir;
+
+        const pc = Math.floor((player.x + player.w / 2) / TILE);
+        const pr = Math.floor((player.y + player.h * 0.6) / TILE);
+        const inLiq = (pc >= 0 && pc < COLS && pr >= 0 && pr < ROWS && liqAmt[pr][pc] > 0.35) ? liqType[pr][pc] : LIQ_NONE;
+        const inFall = waterfalls.some(wf => pc >= wf.x0 && pc < wf.x1 && pr >= wf.y0 && pr <= wf.y1);
+        const footR = Math.floor((player.y + player.h + 1) / TILE);
+        const onMud = (footR >= 0 && footR < ROWS && pc >= 0 && pc < COLS && tiles[footR][pc] === MUD);
+
+        coyote = player.grounded ? 0.11 : Math.max(0, coyote - dt);
+        jumpBuf = (jK && !prevJump) ? 0.12 : Math.max(0, jumpBuf - dt);
+        prevJump = jK;
+
+        const spd = inLiq ? 120 : (onMud ? 105 : 190);
+        player.vx = dir * spd;
+
+        if (inFall) {
+          player.vy = Math.max(-240, player.vy - 700 * dt);
+        } else if (inLiq === LIQ_WATER) {
+          player.vy = jK ? -170 : Math.min(110, player.vy + 300 * dt);
+          jumpBuf = 0;
+        } else if (inLiq === LIQ_LAVA) {
+          player.vy = -220;
+        } else {
+          if (jumpBuf > 0 && coyote > 0) {
+            player.vy = onMud ? -265 : -370;
+            player.grounded = false; player.onIsland = false; coyote = jumpBuf = 0;
+          }
+          player.vy = Math.min(450, player.vy + 900 * dt);
+        }
+
+        movePlayer(player.vx * dt, player.vy * dt);
+        if (pointer.down || touch.act) act();
+
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          p.life -= dt; p.vy += 260 * dt; p.x += p.vx * dt; p.y += p.vy * dt;
+          if (p.life <= 0) particles.splice(i, 1);
+        }
+
+        const viewW = canvas.width / zoomScale, viewH = canvas.height / zoomScale;
+        const tX = Math.max(0, Math.min(COLS * TILE - viewW, player.x - viewW * 0.48));
+        const tY = Math.max(0, Math.min(ROWS * TILE - viewH, player.y - viewH * 0.5));
+        camera.x += (tX - camera.x) * Math.min(1, dt * 8);
+        camera.y += (tY - camera.y) * Math.min(1, dt * 8);
+
+        hudTick += dt;
+        if (hudTick > 0.15) {
+          hudTick = 0;
+          $('biomePill').textContent = `現在地: ${biomeAt(pc)}`;
+          $('statusPill').textContent = inFall ? '逆さ滝：上向き水流で空の浮島へ上昇中'
+            : inLiq === LIQ_WATER ? '水中：Spaceで泳げます'
+            : onMud ? 'ぬかるみ：移動減速（2 坑木で足場）'
+            : 'A/D 移動・Space ジャンプ・左クリック 採掘/水/溶岩/砂';
+          ['warpTown','warpSwamp','warpDunes','warpMagnet','warpFalls'].forEach((id, i) => {
+            const idx = pc < 18 ? 0 : (pc < 35 ? 1 : (pc < 55 ? 2 : (pc < 74 ? 3 : 4)));
+            $(id).classList.toggle('active', idx === i);
+          });
+        }
+      }
+
+      function draw(ts) {
+        const sec = ts / 1000;
+        const dt = prevTs ? Math.min(0.025, sec - prevTs) : 0;
+        prevTs = sec;
+        update(dt);
+
+        ctx.imageSmoothingEnabled = false;
+        const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        sky.addColorStop(0, '#4c86c2');
+        sky.addColorStop(0.45, '#7cb7e0');
+        sky.addColorStop(0.55, '#1c222e');
+        sky.addColorStop(1, '#0b0e14');
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.scale(zoomScale, zoomScale);
+        ctx.translate(-Math.round(camera.x), -Math.round(camera.y));
+
+        const viewW = canvas.width / zoomScale, viewH = canvas.height / zoomScale;
+        const c0 = Math.max(0, Math.floor(camera.x / TILE) - 1);
+        const c1 = Math.min(COLS - 1, Math.ceil((camera.x + viewW) / TILE) + 1);
+        const r0 = Math.max(0, Math.floor(camera.y / TILE) - 1);
+        const r1 = Math.min(ROWS - 1, Math.ceil((camera.y + viewH) / TILE) + 1);
+
+        const light = computeVisibleLight(c0, c1, r0, r1);
+
+        // 鉱山町の工房小屋
+        ctx.fillStyle = '#3b2e24'; ctx.fillRect(5 * TILE, 13 * TILE - 38, 68, 38);
+        ctx.fillStyle = '#634832'; ctx.fillRect(5 * TILE - 5, 13 * TILE - 44, 78, 7);
+        ctx.fillStyle = '#ff9838'; ctx.fillRect(6.4 * TILE, 13 * TILE - 18, 14, 18);
+
+        // 逆さ滝
+        for (const wf of waterfalls) {
+          const x = wf.x0 * TILE, y = wf.y0 * TILE, w = (wf.x1 - wf.x0) * TILE, h = (wf.y1 - wf.y0) * TILE;
+          ctx.fillStyle = 'rgba(72, 212, 235, 0.24)';
+          ctx.fillRect(x, y, w, h);
+          ctx.strokeStyle = 'rgba(185, 248, 255, 0.6)';
+          for (let i = 0; i < 6; i++) {
+            const off = (sec * 90 + i * 38) % h;
+            ctx.beginPath(); ctx.moveTo(x + 6 + (i % 3) * 10, y + h - off); ctx.lineTo(x + 6 + (i % 3) * 10, Math.max(y, y + h - off - 14)); ctx.stroke();
+          }
+        }
+
+        // 1) 背景壁
+        for (let r = r0; r <= r1; r++) {
+          for (let c = c0; c <= c1; c++) {
+            const bw = backwall[r][c];
+            if (!bw) continue;
+            ctx.drawImage(bw === 1 ? BW_DIRT : BW_STONE, c * TILE, r * TILE, TILE, TILE);
+          }
+        }
+
+        // 2) テラリア風オートタイル＆連続液体
+        for (let r = r0; r <= r1; r++) {
+          for (let c = c0; c <= c1; c++) {
+            const id = tiles[r][c];
+            const x = c * TILE, y = r * TILE;
+            if (id !== EMPTY) {
+              const m = META[id];
+              const up = isSolid(r - 1, c), dn = isSolid(r + 1, c), lt = isSolid(r, c - 1), rt = isSolid(r, c + 1);
+              ctx.drawImage(TEX[id], x, y, TILE, TILE);
+              if (!up) { ctx.fillStyle = m.edge; ctx.fillRect(x, y, TILE, 2); ctx.fillStyle = m.hi; ctx.fillRect(x, y + 2, TILE, 1); }
+              if (!dn) { ctx.fillStyle = m.edge; ctx.fillRect(x, y + TILE - 2, TILE, 2); }
+              if (!lt) { ctx.fillStyle = m.edge; ctx.fillRect(x, y, 2, TILE); }
+              if (!rt) { ctx.fillStyle = m.edge; ctx.fillRect(x + TILE - 2, y, 2, TILE); }
+              if (id === GRASS && !up) {
+                ctx.fillStyle = '#529c3c'; ctx.fillRect(x + 3, y - 3, 2, 3); ctx.fillRect(x + 11, y - 4, 2, 4);
+              }
+              const ck = cracks.get(`${c},${r}`);
+              if (ck) ctx.drawImage(CRACKS[Math.min(3, ck) - 1], x, y, TILE, TILE);
+            } else if (liqType[r][c] !== LIQ_NONE) {
+              drawContinuousLiquid(ctx, r, c, x, y, sec);
+            }
+
+            const lv = light[r - r0][c - c0];
+            if (lv < 0.99 && (id !== EMPTY || backwall[r][c] > 0 || liqType[r][c] !== LIQ_NONE)) {
+              ctx.fillStyle = `rgba(4, 6, 12, ${(1 - Math.max(0.08, lv)) * 0.88})`;
+              ctx.fillRect(x, y, TILE, TILE);
+            }
+          }
+        }
+
+        // 3) 動く浮島チャンク
+        for (let r = 0; r < island.rows; r++) {
+          for (let c = 0; c < island.cols; c++) {
+            const id = island.grid[r][c];
+            if (!id) continue;
+            const x = Math.round(island.x + c * TILE), y = Math.round(island.y + r * TILE);
+            ctx.drawImage(TEX[id], x, y, TILE, TILE);
+            const m = META[id];
+            if (r === 0 || !island.grid[r - 1][c]) { ctx.fillStyle = m.edge; ctx.fillRect(x, y, TILE, 2); ctx.fillStyle = m.hi; ctx.fillRect(x, y + 2, TILE, 1); }
+            if (r === island.rows - 1 || !island.grid[r + 1][c]) { ctx.fillStyle = m.edge; ctx.fillRect(x, y + TILE - 2, TILE, 2); }
+            if (c === 0 || !island.grid[r][c - 1]) { ctx.fillStyle = m.edge; ctx.fillRect(x, y, 2, TILE); }
+            if (c === island.cols - 1 || !island.grid[r][c + 1]) { ctx.fillStyle = m.edge; ctx.fillRect(x + TILE - 2, y, 2, TILE); }
+          }
+        }
+
+        // 4) パーティクル＆プレイヤー
+        for (const p of particles) {
+          ctx.fillStyle = p.color;
+          ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
+        }
+        ctx.fillStyle = '#e0a558'; ctx.fillRect(Math.round(player.x), Math.round(player.y + 9), player.w, player.h - 9);
+        ctx.fillStyle = '#f5d2ae'; ctx.fillRect(Math.round(player.x + 1), Math.round(player.y), player.w - 2, 9);
+        ctx.fillStyle = '#1b1b1b'; ctx.fillRect(Math.round(player.facing === 1 ? player.x + 8 : player.x + 3), Math.round(player.y + 3), 2, 2);
+
+        const wp = worldPtr();
+        if (Math.hypot(wp.x - (player.x + player.w / 2), wp.y - (player.y + player.h / 2)) <= 7.5 * TILE) {
+          ctx.strokeStyle = 'rgba(255, 238, 168, 0.9)';
+          ctx.strokeRect(Math.floor(wp.x / TILE) * TILE + 0.5, Math.floor(wp.y / TILE) * TILE + 0.5, TILE - 1, TILE - 1);
+        }
+
+        ctx.restore();
+        requestAnimationFrame(draw);
+      }
+
+      // ===== イベント =====
+      const setPtr = e => {
+        const r = canvas.getBoundingClientRect();
+        pointer.x = (e.clientX - r.left) * (canvas.width / r.width);
+        pointer.y = (e.clientY - r.top) * (canvas.height / r.height);
+      };
+      canvas.addEventListener('pointerdown', e => { ensureAudio(); canvas.focus(); setPtr(e); pointer.down = true; act(); });
+      canvas.addEventListener('pointermove', setPtr);
+      window.addEventListener('pointerup', () => { pointer.down = false; });
+      document.querySelectorAll('button').forEach(b => b.addEventListener('click', () => b.blur()));
+
+      window.addEventListener('keydown', e => {
+        if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+        keys.add(e.code);
+        if (e.key >= '1' && e.key <= '5') { tool = ['pick','wood','water','lava','sand'][Number(e.key) - 1]; syncUI(); }
+      });
+      window.addEventListener('keyup', e => keys.delete(e.code));
+
+      [['tLeft','left'],['tRight','right'],['tJump','jump'],['tAct','act']].forEach(([id, k]) => {
+        const el = $(id);
+        el.addEventListener('pointerdown', e => { e.preventDefault(); ensureAudio(); touch[k] = true; });
+        ['pointerup','pointerleave','pointercancel'].forEach(ev => el.addEventListener(ev, e => { e.preventDefault(); touch[k] = false; }));
+      });
+
+      const warpTo = (col, row) => { ensureAudio(); player.x = col * TILE; player.y = row * TILE; player.vx = player.vy = 0; };
+      $('warpTown').onclick = () => warpTo(8, 10);
+      $('warpSwamp').onclick = () => warpTo(20, 11);
+      $('warpDunes').onclick = () => warpTo(37, 10);
+      $('warpMagnet').onclick = () => warpTo(61, 8);
+      $('warpFalls').onclick = () => warpTo(77, 11);
+
+      $('zoomNormal').onclick = () => { zoomScale = 1.5; syncUI(); };
+      $('zoomWide').onclick = () => { zoomScale = 1.0; syncUI(); };
+      $('toolPick').onclick = () => { tool = 'pick'; syncUI(); };
+      $('toolWood').onclick = () => { tool = 'wood'; syncUI(); };
+      $('toolWater').onclick = () => { tool = 'water'; syncUI(); };
+      $('toolLava').onclick = () => { tool = 'lava'; syncUI(); };
+      $('toolSand').onclick = () => { tool = 'sand'; syncUI(); };
+      $('muteBtn').onclick = () => { muted = !muted; $('muteBtn').textContent = muted ? '音OFF' : '音ON'; };
+      $('resetBtn').onclick = () => buildWorld();
+
+      window.addEventListener('load', () => {
+        buildTextures();
+        buildWorld();
+        requestAnimationFrame(draw);
+      });
+    })();
+  </script>
+</body>
+</html>

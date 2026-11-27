@@ -1,0 +1,1339 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>こもれび鉱洞 — 丸石UI/UXプロトタイプ</title>
+  <style>
+    :root {
+      /* マイクラ風 16x16 丸石（Cobblestone）ドット絵テクスチャ */
+      --cobble-dark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%2325282c'/%3E%3Crect x='1' y='1' width='5' height='4' fill='%233b4047'/%3E%3Crect x='2' y='1' width='3' height='1' fill='%234d535c'/%3E%3Crect x='7' y='1' width='7' height='5' fill='%23343940'/%3E%3Crect x='8' y='1' width='5' height='2' fill='%23454b54'/%3E%3Crect x='1' y='6' width='6' height='4' fill='%2331363c'/%3E%3Crect x='2' y='6' width='4' height='1' fill='%23444a52'/%3E%3Crect x='8' y='7' width='7' height='4' fill='%233c4148'/%3E%3Crect x='9' y='7' width='4' height='1' fill='%234f565f'/%3E%3Crect x='1' y='11' width='4' height='4' fill='%23393e45'/%3E%3Crect x='6' y='11' width='5' height='4' fill='%232e3339'/%3E%3Crect x='12' y='12' width='3' height='3' fill='%233d424a'/%3E%3C/svg%3E");
+      --cobble-mid: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%233b4047'/%3E%3Crect x='1' y='1' width='5' height='4' fill='%235b626c'/%3E%3Crect x='2' y='1' width='3' height='1' fill='%23727b87'/%3E%3Crect x='7' y='1' width='7' height='5' fill='%23505760'/%3E%3Crect x='8' y='1' width='5' height='2' fill='%2368707b'/%3E%3Crect x='1' y='6' width='6' height='4' fill='%234c525b'/%3E%3Crect x='2' y='6' width='4' height='1' fill='%23646c77'/%3E%3Crect x='8' y='7' width='7' height='4' fill='%235d646f'/%3E%3Crect x='9' y='7' width='4' height='1' fill='%23767f8c'/%3E%3Crect x='1' y='11' width='4' height='4' fill='%23575e68'/%3E%3Crect x='6' y='11' width='5' height='4' fill='%23474d56'/%3E%3Crect x='7' y='11' width='3' height='1' fill='%235e6671'/%3E%3Crect x='12' y='12' width='3' height='3' fill='%235e6570'/%3E%3C/svg%3E");
+      --cobble-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%234b515a'/%3E%3Crect x='1' y='1' width='5' height='4' fill='%236d7580'/%3E%3Crect x='2' y='1' width='3' height='1' fill='%2388929f'/%3E%3Crect x='7' y='1' width='7' height='5' fill='%23626a75'/%3E%3Crect x='8' y='1' width='5' height='2' fill='%237c8592'/%3E%3Crect x='1' y='6' width='6' height='4' fill='%235c636d'/%3E%3Crect x='8' y='7' width='7' height='4' fill='%23707884'/%3E%3Crect x='9' y='7' width='4' height='1' fill='%238b94a2'/%3E%3Crect x='1' y='11' width='4' height='4' fill='%2369717c'/%3E%3Crect x='6' y='11' width='5' height='4' fill='%23575e68'/%3E%3Crect x='12' y='12' width='3' height='3' fill='%23717986'/%3E%3C/svg%3E");
+      /* 鍛冶台：鍛鉄プレート＆鋲（Anvil Iron） */
+      --iron-plate: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%23252a32'/%3E%3Crect x='1' y='1' width='14' height='14' fill='%23333944'/%3E%3Crect x='1' y='1' width='14' height='1' fill='%234b5464'/%3E%3Crect x='1' y='14' width='14' height='1' fill='%231c2026'/%3E%3Crect x='2' y='2' width='2' height='2' fill='%235d6778'/%3E%3Crect x='12' y='2' width='2' height='2' fill='%235d6778'/%3E%3Crect x='2' y='12' width='2' height='2' fill='%235d6778'/%3E%3Crect x='12' y='12' width='2' height='2' fill='%235d6778'/%3E%3Crect x='5' y='6' width='6' height='1' fill='%233d4452'/%3E%3Crect x='4' y='9' width='8' height='1' fill='%232a3039'/%3E%3C/svg%3E");
+      /* 図鑑：古紙・羊皮紙（Parchment） */
+      --parchment: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%23d8c39e'/%3E%3Crect x='1' y='2' width='3' height='1' fill='%23cbb38b'/%3E%3Crect x='8' y='1' width='4' height='2' fill='%23e2cfa9'/%3E%3Crect x='12' y='5' width='3' height='2' fill='%23c9b086'/%3E%3Crect x='3' y='7' width='5' height='1' fill='%23e4d2ae'/%3E%3Crect x='10' y='10' width='4' height='2' fill='%23cdb68e'/%3E%3Crect x='2' y='12' width='4' height='2' fill='%23c6ad83'/%3E%3Crect x='7' y='14' width='5' height='1' fill='%23e0cca6'/%3E%3C/svg%3E");
+      /* 鞄：革＆ステッチ（Leather） */
+      --leather: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%2352321e'/%3E%3Crect x='1' y='1' width='6' height='6' fill='%23633d25'/%3E%3Crect x='9' y='1' width='6' height='6' fill='%235c3822'/%3E%3Crect x='1' y='9' width='6' height='6' fill='%23593620'/%3E%3Crect x='9' y='9' width='6' height='6' fill='%23663f27'/%3E%3Crect x='2' y='2' width='2' height='1' fill='%23754a2f'/%3E%3Crect x='10' y='10' width='2' height='1' fill='%23754a2f'/%3E%3Crect x='0' y='7' width='16' height='1' fill='%233d2415'/%3E%3Crect x='7' y='0' width='1' height='16' fill='%233d2415'/%3E%3C/svg%3E");
+      /* 標本棚：オーク木板（Oak Planks） */
+      --wood-plank: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%237d5a34'/%3E%3Crect x='0' y='0' width='16' height='3' fill='%238f693e'/%3E%3Crect x='0' y='3' width='16' height='1' fill='%235c4022'/%3E%3Crect x='0' y='4' width='16' height='3' fill='%23856138'/%3E%3Crect x='0' y='7' width='16' height='1' fill='%235c4022'/%3E%3Crect x='0' y='8' width='16' height='3' fill='%23916b40'/%3E%3Crect x='0' y='11' width='16' height='1' fill='%235c4022'/%3E%3Crect x='0' y='12' width='16' height='3' fill='%23825e36'/%3E%3Crect x='0' y='15' width='16' height='1' fill='%235c4022'/%3E%3Crect x='6' y='0' width='1' height='4' fill='%235c4022'/%3E%3Crect x='12' y='4' width='1' height='4' fill='%235c4022'/%3E%3Crect x='4' y='8' width='1' height='4' fill='%235c4022'/%3E%3Crect x='10' y='12' width='1' height='4' fill='%235c4022'/%3E%3C/svg%3E");
+      --text: #f3f5f8;
+      --muted: #c2c9d4;
+      --gold: #f0b95b;
+      --copper: #d97e46;
+      --tin: #a5bfcf;
+      --ok: #7be098;
+      --bad: #f07878;
+      --pixel-out: inset 2px 2px 0 rgba(255,255,255,0.22), inset -2px -2px 0 rgba(0,0,0,0.55);
+      --pixel-in: inset 2px 2px 0 rgba(0,0,0,0.6), inset -2px -2px 0 rgba(255,255,255,0.14);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      margin: 0;
+    }
+    body {
+      padding: 8px 10px;
+      background-image: var(--cobble-dark);
+      background-size: 48px 48px;
+      image-rendering: pixelated;
+      color: var(--text);
+      font-family: "Inter", system-ui, -apple-system, "Hiragino Sans", "Yu Gothic", sans-serif;
+      font-size: 12.5px;
+      line-height: 1.35;
+      overflow: hidden;
+      transition: background-color 0.2s ease;
+    }
+    body.bg-forge {
+      background-image: linear-gradient(rgba(10,13,18,0.58), rgba(10,13,18,0.58)), var(--iron-plate);
+    }
+    body.bg-codex {
+      background-image: linear-gradient(rgba(22,12,6,0.52), rgba(22,12,6,0.52)), var(--leather);
+    }
+    body.bg-inventory {
+      background-image: linear-gradient(rgba(20,12,6,0.58), rgba(20,12,6,0.58)), var(--wood-plank);
+    }
+
+    /* 上部バー（タブ・素材・ボタンを覆う枠）も現在タブの材質へ完全連動 */
+    body.bg-forge .topbar {
+      background-image: var(--iron-plate);
+      border-color: #5b687d;
+      box-shadow: inset 2px 2px 0 rgba(190,210,240,0.22), inset -2px -2px 0 rgba(0,0,0,0.65), 0 3px 0 rgba(0,0,0,0.5);
+    }
+    body.bg-forge .topbar .res-chip {
+      background: rgba(16, 22, 32, 0.85);
+      border-color: #6b7b94;
+      color: #e4eefc;
+    }
+    body.bg-forge .topbar button.btn,
+    body.bg-forge .iron-panel button.btn:not(.primary) {
+      background-image: var(--iron-plate);
+      border-color: #6b7b94;
+      color: #eef5ff;
+    }
+
+    body.bg-codex .topbar {
+      background-image: var(--parchment);
+      border: 3px solid #4a2e1b;
+      box-shadow: inset 2px 2px 0 rgba(255,248,225,0.45), inset -2px -2px 0 rgba(90,56,28,0.45), 0 3px 0 rgba(0,0,0,0.45);
+    }
+    body.bg-codex .topbar::before { background: rgba(110, 74, 38, 0.14); }
+    body.bg-codex .topbar .res-chip {
+      background: rgba(247, 236, 212, 0.9);
+      border: 2px solid #7d5b3b;
+      box-shadow: inset 1px 1px 0 rgba(255,250,235,0.7);
+      color: #2b1d12;
+    }
+    body.bg-codex .topbar button.btn {
+      background-image: var(--leather);
+      border: 2px solid #361e0f;
+      color: #f7ebd4;
+    }
+
+    body.bg-inventory .topbar {
+      background-image: var(--wood-plank);
+      border: 3px solid #362310;
+      box-shadow: inset 2px 2px 0 rgba(255,220,170,0.25), inset -2px -2px 0 rgba(0,0,0,0.55), 0 3px 0 rgba(0,0,0,0.45);
+    }
+    body.bg-inventory .topbar::before { background: rgba(34, 21, 9, 0.2); }
+    body.bg-inventory .topbar .res-chip {
+      background: rgba(48, 28, 15, 0.88);
+      border: 2px solid #8a623c;
+      color: #faecd8;
+    }
+    body.bg-inventory .topbar button.btn {
+      background-image: var(--leather);
+      border: 2px solid #2b170b;
+      color: #faecd8;
+    }
+
+    /* 各タブボタン自体もそれぞれの材質＋専用枠にする */
+    .tab-btn[data-tab="furnace"] {
+      background-image: var(--cobble-light);
+      border-color: #22262c;
+    }
+    .tab-btn[data-tab="forge"] {
+      background-image: var(--iron-plate);
+      border-color: #5b687d;
+      color: #d6e2f5;
+    }
+    .tab-btn[data-tab="forge"].active {
+      background-image: linear-gradient(180deg, #3c5473 0%, #24354a 100%);
+      border-color: #9ec9ff;
+      color: #f0f7ff;
+    }
+    .tab-btn[data-tab="codex"] {
+      background-image: var(--parchment);
+      border-color: #5e3c22;
+      color: #2b1d12;
+      text-shadow: 0 1px 0 rgba(255,248,225,0.6);
+    }
+    .tab-btn[data-tab="codex"] .badge-mini { color: #8c4a12; }
+    .tab-btn[data-tab="codex"].active {
+      background-image: linear-gradient(180deg, #7a4b26 0%, #4d2c14 100%);
+      border-color: #f0c068;
+      color: #fff3d6;
+      text-shadow: 1px 1px 0 #1a0d05;
+    }
+    .tab-btn[data-tab="codex"].active .badge-mini { color: #ffd982; }
+    .tab-btn[data-tab="inventory"] {
+      background-image: var(--wood-plank);
+      border-color: #362310;
+      color: #f7ead6;
+    }
+    .tab-btn[data-tab="inventory"].active {
+      background-image: linear-gradient(180deg, #2b593c 0%, #1b3b27 100%);
+      border-color: #8bf0aa;
+      color: #e6fff0;
+    }
+    @media (max-width: 780px) {
+      body { overflow: auto; height: auto; }
+    }
+    .app {
+      max-width: 960px;
+      height: 100%;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* 丸石パネル共通 */
+    .stone-panel {
+      background-image: var(--cobble-mid);
+      background-size: 48px 48px;
+      image-rendering: pixelated;
+      border: 2px solid #14171a;
+      box-shadow: var(--pixel-out), 0 3px 0 rgba(0,0,0,0.45);
+      position: relative;
+    }
+    .stone-panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: rgba(18, 21, 26, 0.42);
+      pointer-events: none;
+    }
+    .stone-panel > * { position: relative; z-index: 1; }
+
+    /* 鍛冶台：鍛鉄プレートパネル */
+    .iron-panel {
+      background-image: var(--iron-plate);
+      background-size: 48px 48px;
+      image-rendering: pixelated;
+      border: 2px solid #0e1014;
+      box-shadow: inset 2px 2px 0 rgba(190,210,240,0.22), inset -2px -2px 0 rgba(0,0,0,0.65), 0 3px 0 rgba(0,0,0,0.5);
+      position: relative;
+    }
+    .iron-panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 19, 26, 0.34);
+      pointer-events: none;
+    }
+    .iron-panel > * { position: relative; z-index: 1; }
+    .iron-panel .gear-item {
+      background-image: var(--iron-plate);
+      background-size: 32px 32px;
+      border-color: #5b687d;
+    }
+    .iron-panel .compare-table {
+      background: rgba(14, 19, 28, 0.84);
+      border-color: #5b687d;
+    }
+    .iron-panel .compare-table th,
+    .iron-panel .compare-table td {
+      border-bottom-color: #374357;
+    }
+
+    /* 図鑑：古書・羊皮紙パネル */
+    .book-panel {
+      background-image: var(--parchment);
+      background-size: 48px 48px;
+      image-rendering: pixelated;
+      border: 4px solid #4a2e1b;
+      box-shadow: inset 3px 3px 0 rgba(255,248,225,0.45), inset -3px -3px 0 rgba(90,56,28,0.45), 0 3px 0 rgba(0,0,0,0.5);
+      color: #2b1d12;
+      position: relative;
+    }
+    .book-panel .card-head h2 {
+      color: #3a2313;
+      text-shadow: 1px 1px 0 rgba(255,245,220,0.6);
+    }
+    .book-panel .subnote { color: #5c432d; }
+    .book-panel .codex-card {
+      background: rgba(244, 232, 206, 0.82);
+      border: 2px solid #7d5b3b;
+      box-shadow: inset 2px 2px 0 rgba(255,250,235,0.6), inset -2px -2px 0 rgba(120,85,50,0.25);
+      color: #2b1d12;
+    }
+    .book-panel .codex-card.discovered { border-color: #9e621c; background: rgba(252, 243, 222, 0.92); }
+    .book-panel .codex-card.hinted { border-color: #466694; border-style: dashed; }
+    .book-panel .trait-tag {
+      background: #422c1c;
+      border-color: #2b1b10;
+      color: #f7ebd4;
+    }
+    .book-panel .trait-tag.good { background: #264730; border-color: #193020; color: #d6f7df; }
+    .book-panel .trait-tag.warn { background: #632828; border-color: #401717; color: #ffd9d9; }
+
+    /* 鞄：革＆ステッチパネル */
+    .leather-panel {
+      background-image: var(--leather);
+      background-size: 48px 48px;
+      image-rendering: pixelated;
+      border: 3px solid #2b170b;
+      box-shadow: inset 2px 2px 0 rgba(230,175,130,0.25), inset -2px -2px 0 rgba(0,0,0,0.6), 0 3px 0 rgba(0,0,0,0.5);
+      position: relative;
+    }
+    .leather-panel::before {
+      content: "";
+      position: absolute;
+      inset: 4px;
+      border: 2px dashed rgba(224, 184, 134, 0.35);
+      pointer-events: none;
+    }
+    .leather-panel > * { position: relative; z-index: 1; }
+    .leather-panel .res-chip {
+      background: rgba(38, 22, 13, 0.88);
+      border-color: #8a5e3b;
+      color: #fae8d2;
+    }
+    .leather-panel .slot {
+      background: rgba(38, 22, 13, 0.82);
+      border-color: #7d5434;
+    }
+    .leather-panel .slot.empty { color: #8c6a52; }
+
+    /* 標本棚：オーク木板パネル */
+    .wood-panel {
+      background-image: var(--wood-plank);
+      background-size: 48px 48px;
+      image-rendering: pixelated;
+      border: 3px solid #362310;
+      box-shadow: inset 2px 2px 0 rgba(255,220,170,0.25), inset -2px -2px 0 rgba(0,0,0,0.55), 0 3px 0 rgba(0,0,0,0.5);
+      position: relative;
+    }
+    .wood-panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: rgba(34, 21, 9, 0.24);
+      pointer-events: none;
+    }
+    .wood-panel > * { position: relative; z-index: 1; }
+    .wood-panel .res-chip {
+      background: rgba(48, 30, 14, 0.88);
+      border-color: #a87b4c;
+      color: #fff0d6;
+    }
+    .wood-panel .specimen {
+      background-image: var(--wood-plank);
+      background-size: 32px 32px;
+      border-color: #4d3218;
+    }
+
+    /* 上部バー（1行コンパクト） */
+    .topbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      padding: 6px 10px;
+    }
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .tab-btn {
+      background-image: var(--cobble-light);
+      background-size: 32px 32px;
+      color: var(--muted);
+      border: 2px solid #14171a;
+      box-shadow: var(--pixel-out);
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      text-shadow: 1px 1px 0 #111;
+    }
+    .tab-btn:hover { filter: brightness(1.12); color: #fff; }
+    .tab-btn:active {
+      background-image: none;
+      background-color: #20242b;
+      box-shadow: var(--pixel-in);
+      transform: translateY(1px);
+    }
+    .tab-btn.active {
+      background-image: linear-gradient(180deg, #b86c28 0%, #7a3e14 100%);
+      border-color: #ffcf70;
+      color: #fff8e0;
+      box-shadow: inset 2px 2px 0 rgba(255,235,175,0.4), inset -2px -2px 0 rgba(55,20,0,0.7);
+      filter: none;
+    }
+    .badge-mini {
+      margin-left: 4px;
+      font-size: 11px;
+      color: var(--gold);
+    }
+
+    .resources {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 5px;
+    }
+    .res-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(16, 19, 24, 0.78);
+      border: 2px solid #14171a;
+      box-shadow: var(--pixel-in);
+      padding: 3px 7px;
+      font-size: 11.5px;
+      font-variant-numeric: tabular-nums;
+    }
+    .dot { width: 8px; height: 8px; display: inline-block; border: 1px solid #111; }
+
+    /* 丸石ボタン */
+    button.btn {
+      background-image: var(--cobble-light);
+      background-size: 32px 32px;
+      color: #fff;
+      border: 2px solid #14171a;
+      box-shadow: var(--pixel-out);
+      padding: 5px 9px;
+      font-size: 12px;
+      font-weight: 700;
+      font-family: inherit;
+      cursor: pointer;
+      text-shadow: 1px 1px 0 #111;
+    }
+    button.btn:hover:not(:disabled) { filter: brightness(1.14); }
+    button.btn:active:not(:disabled) {
+      background-image: none;
+      background-color: #252a32;
+      box-shadow: var(--pixel-in);
+      transform: translateY(1px);
+    }
+    button.btn.primary:active:not(:disabled) {
+      background: linear-gradient(180deg, #8a3f10, #662b08);
+      transform: translateY(1px);
+    }
+    button.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.btn.primary {
+      background: linear-gradient(180deg, #d67a29, #964915);
+      border-color: #14171a;
+      box-shadow: inset 2px 2px 0 rgba(255,230,170,0.45), inset -2px -2px 0 rgba(60,20,0,0.65);
+      color: #fff8e6;
+    }
+
+    /* メイン領域（残り高さを1画面に収める） */
+    .views-wrap {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .view {
+      display: none;
+      height: 100%;
+    }
+    .view.active {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+    .grid-main {
+      display: grid;
+      grid-template-columns: 1.08fr 0.92fr;
+      gap: 8px;
+      height: 100%;
+      min-height: 0;
+    }
+    @media (max-width: 780px) {
+      .grid-main { grid-template-columns: 1fr; height: auto; }
+    }
+    .card {
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .card-head h2 {
+      margin: 0;
+      font-size: 13.5px;
+      font-weight: 700;
+      color: #fff0d4;
+      text-shadow: 1px 1px 0 #111;
+    }
+    .subnote { font-size: 11.5px; color: var(--muted); margin: 0; }
+
+    /* 丸石配合炉 */
+    .crucible-box {
+      background-image: var(--cobble-dark);
+      background-size: 32px 32px;
+      border: 2px solid #14171a;
+      box-shadow: var(--pixel-in);
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      transition: box-shadow 0.2s ease;
+    }
+    .crucible-box.casting {
+      box-shadow: inset 0 0 36px rgba(255, 165, 40, 0.8), 0 0 18px rgba(255, 120, 30, 0.55);
+    }
+    .furnace-chamber {
+      background: linear-gradient(180deg, #111317 0%, #1d1410 62%, #33160a 100%);
+      border: 3px solid #2b2f36;
+      box-shadow: inset 0 6px 14px rgba(0,0,0,0.85);
+      padding: 7px 10px 6px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .furnace-meta {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: #d6dce6;
+    }
+    .temp-pill {
+      padding: 1px 7px;
+      background: rgba(235, 92, 24, 0.28);
+      border: 1px solid #ff9944;
+      color: #ffe0b5;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .ingot-slots { display: flex; gap: 6px; justify-content: center; }
+    .ingot-slot {
+      width: 40px;
+      height: 21px;
+      border: 2px solid #14171a;
+      box-shadow: inset 2px 2px 0 rgba(255,255,255,0.35), inset -2px -2px 0 rgba(0,0,0,0.45);
+      font-size: 11px;
+      font-weight: 700;
+      color: #16100a;
+      cursor: pointer;
+    }
+    .ingot-slot:hover { transform: translateY(-2px); filter: brightness(1.1); }
+    .ingot-slot.copper { background: #dc8248; }
+    .ingot-slot.tin { background: #b5cddb; }
+    .crucible-pot-wrap {
+      position: relative;
+      width: 146px;
+      height: 60px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+    }
+    .crucible-rim {
+      position: absolute;
+      top: 4px;
+      width: 138px;
+      height: 9px;
+      background: #6c737d;
+      border: 2px solid #14171a;
+      z-index: 3;
+    }
+    .crucible-pot {
+      position: relative;
+      width: 124px;
+      height: 50px;
+      background: #25282e;
+      border: 2px solid #14171a;
+      border-top: none;
+      overflow: hidden;
+    }
+    .molten-pool {
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      height: 62%;
+      transition: background 0.25s ease, height 0.25s ease;
+    }
+    .molten-pool::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 30% 35%, rgba(255,255,255,0.5) 0 3px, transparent 4px),
+                  radial-gradient(circle at 70% 45%, rgba(255,255,255,0.38) 0 3px, transparent 4px);
+      animation: simmer 1.5s ease-in-out infinite alternate;
+    }
+    .fire-bed {
+      width: 100%;
+      height: 16px;
+      background: linear-gradient(180deg, rgba(255,140,36,0.15), rgba(255,95,24,0.75) 65%, #731d0c 100%);
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+      gap: 8px;
+      overflow: hidden;
+    }
+    .flame {
+      width: 12px;
+      height: 12px;
+      background: radial-gradient(circle at 50% 70%, #fff4b8, #ff9929 60%, rgba(220,50,15,0.2) 100%);
+      animation: flicker 0.65s ease-in-out infinite alternate;
+    }
+    .flame:nth-child(2n) { height: 15px; animation-duration: 0.48s; }
+    .crucible-box.casting .flame { transform: scaleY(1.65); filter: brightness(1.4); }
+    @keyframes flicker {
+      0% { transform: scaleY(0.85); opacity: 0.8; }
+      100% { transform: scaleY(1.18); opacity: 1; }
+    }
+    @keyframes simmer {
+      0% { transform: translateY(1px); opacity: 0.65; }
+      100% { transform: translateY(-2px); opacity: 1; }
+    }
+
+    /* 4段階配合＆選択ボタン群（省スペース） */
+    .ratio-steps {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 4px;
+    }
+    .step-card, .choice-box {
+      background-image: var(--cobble-light);
+      background-size: 32px 32px;
+      border: 2px solid #14171a;
+      box-shadow: var(--pixel-out);
+      padding: 5px 6px;
+      text-align: center;
+      cursor: pointer;
+      color: #fff;
+      text-shadow: 1px 1px 0 #111;
+    }
+    .step-card:hover, .choice-box:hover { filter: brightness(1.12); }
+    .step-card:active, .choice-box:active {
+      background-image: none;
+      background-color: #23272e;
+      box-shadow: var(--pixel-in);
+      transform: translateY(1px);
+    }
+    .step-card.active, .choice-box.active {
+      background-image: linear-gradient(180deg, #a86426 0%, #6b3914 100%);
+      border-color: #ffd37a;
+      box-shadow: inset 2px 2px 0 rgba(255,235,180,0.38), inset -2px -2px 0 rgba(50,18,0,0.68);
+      color: #fff8e2;
+      filter: none;
+    }
+    .step-card.active .r-name { color: #ffe8b8; }
+    .step-card .r-num { font-size: 12px; font-weight: 700; display: block; }
+    .step-card .r-name { font-size: 10.5px; color: #dde3ec; display: block; }
+
+    .opt-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+    .opt-col {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .opt-label {
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .choice-box .title { font-size: 11.5px; font-weight: 700; display: block; }
+
+    /* 右：プレビュー＆6軸（2列コンパクト） */
+    .alloy-hero {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(16, 19, 24, 0.72);
+      border: 2px solid #14171a;
+      box-shadow: var(--pixel-in);
+      padding: 8px 10px;
+    }
+    .ingot-icon {
+      width: 42px;
+      height: 42px;
+      border: 2px solid #14171a;
+      box-shadow: var(--pixel-out);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+    .axes-list {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px 12px;
+      background: rgba(16, 19, 24, 0.65);
+      border: 2px solid #14171a;
+      box-shadow: var(--pixel-in);
+      padding: 8px 10px;
+    }
+    .axis-row {
+      display: grid;
+      grid-template-columns: 52px 1fr 22px;
+      align-items: center;
+      gap: 6px;
+      font-size: 11.5px;
+    }
+    .axis-track {
+      height: 8px;
+      background: #14171c;
+      border: 1px solid #3c434f;
+    }
+    .axis-fill { height: 100%; transition: width 0.22s ease; }
+
+    .traits { display: flex; flex-wrap: wrap; gap: 5px; }
+    .trait-tag {
+      font-size: 11px;
+      padding: 2px 7px;
+      background: rgba(20, 24, 30, 0.85);
+      border: 1px solid #6c7687;
+      color: #eef2f8;
+    }
+    .trait-tag.good { border-color: var(--ok); color: #cef7da; }
+    .trait-tag.warn { border-color: var(--bad); color: #ffd1d1; }
+
+    .spec-box {
+      background: rgba(16, 19, 24, 0.78);
+      border: 2px solid #14171a;
+      box-shadow: var(--pixel-in);
+      padding: 8px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #ffebd0;
+    }
+
+    /* 鍛冶台・図鑑・持ち物 */
+    .gear-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow-y: auto;
+      flex: 1 1 auto;
+    }
+    .gear-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      background-image: var(--cobble-light);
+      background-size: 32px 32px;
+      border: 2px solid #14171a;
+      box-shadow: var(--pixel-out);
+      padding: 7px 10px;
+      cursor: pointer;
+      text-shadow: 1px 1px 0 #111;
+    }
+    .gear-item:active {
+      background-image: none;
+      background-color: #1c222b;
+      box-shadow: var(--pixel-in);
+      transform: translateY(1px);
+    }
+    .gear-item.selected {
+      background-image: linear-gradient(180deg, #3c5473 0%, #24354a 100%);
+      border-color: #9ec9ff;
+      box-shadow: inset 2px 2px 0 rgba(200,230,255,0.32), inset -2px -2px 0 rgba(10,20,35,0.7);
+      color: #f0f7ff;
+    }
+    .gear-swatch { width: 12px; height: 12px; border: 1px solid #111; flex-shrink: 0; }
+    .compare-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      background: rgba(16, 19, 24, 0.75);
+      border: 2px solid #14171a;
+    }
+    .compare-table th, .compare-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #2f3540;
+      text-align: left;
+    }
+    .compare-table th { color: var(--muted); }
+    .diff-up { color: var(--ok); font-weight: 700; }
+    .diff-down { color: var(--bad); font-weight: 700; }
+    .seg-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+
+    .codex-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      flex: 1 1 auto;
+    }
+    .codex-card {
+      background: rgba(18, 22, 28, 0.8);
+      border: 2px solid #14171a;
+      box-shadow: var(--pixel-in);
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .codex-card.discovered { border-color: var(--gold); }
+    .codex-card.hinted { border-color: #7ea3d4; }
+
+    .inv-slots {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      flex: 1 1 auto;
+      align-content: start;
+    }
+    .slot {
+      background: rgba(18, 22, 28, 0.82);
+      border: 2px solid #14171a;
+      box-shadow: var(--pixel-in);
+      padding: 6px;
+      min-height: 54px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      font-size: 11px;
+    }
+    .slot.empty { color: #67707e; align-items: center; justify-content: center; }
+    .shelf-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .specimen {
+      background-image: var(--cobble-light);
+      background-size: 32px 32px;
+      border: 2px solid #14171a;
+      box-shadow: var(--pixel-out);
+      padding: 8px 6px;
+      text-align: center;
+      cursor: pointer;
+      text-shadow: 1px 1px 0 #111;
+    }
+    .specimen:active {
+      background-image: none;
+      background-color: #3a2614;
+      box-shadow: var(--pixel-in);
+      transform: translateY(1px);
+    }
+    .specimen.placed {
+      background-image: linear-gradient(180deg, #2b593c 0%, #1b3b27 100%);
+      border-color: #8bf0aa;
+      box-shadow: inset 2px 2px 0 rgba(190,255,210,0.28), inset -2px -2px 0 rgba(10,30,18,0.7);
+      color: #e6fff0;
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 12px;
+      transform: translateX(-50%) translateY(14px);
+      background: rgba(16, 19, 24, 0.95);
+      border: 2px solid var(--gold);
+      color: #fff3d6;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.18s ease;
+      z-index: 50;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- 1行ヘッダー：タブ＋素材＋検証操作 -->
+    <header class="topbar stone-panel">
+      <nav class="tabs" aria-label="工房メニュー">
+        <button class="tab-btn active" data-tab="furnace" type="button">配合炉</button>
+        <button class="tab-btn" data-tab="forge" type="button">鍛冶台<span class="badge-mini" id="gearCountBadge">2</span></button>
+        <button class="tab-btn" data-tab="codex" type="button">図鑑<span class="badge-mini" id="codexBadge">1/4</span></button>
+        <button class="tab-btn" data-tab="inventory" type="button">鞄・棚<span class="badge-mini" id="bagBadge">6/12</span></button>
+      </nav>
+      <div class="resources">
+        <span class="res-chip"><span class="dot" style="background:var(--copper);"></span>銅<strong id="resCopper">14</strong></span>
+        <span class="res-chip"><span class="dot" style="background:var(--tin);"></span>錫<strong id="resTin">10</strong></span>
+        <span class="res-chip"><span class="dot" style="background:#b08456;"></span>カシ<strong id="resOak">5</strong></span>
+        <span class="res-chip"><span class="dot" style="background:#d9b37c;"></span>ヒッコリー<strong id="resHickory">4</strong></span>
+        <button id="readNoteBtn" class="btn" type="button">手記+1</button>
+        <button id="refillBtn" class="btn" type="button">+素材</button>
+        <button id="muteBtn" class="btn" type="button">音ON</button>
+      </div>
+    </header>
+
+    <div class="views-wrap">
+      <!-- 1. 合金配合炉 -->
+      <section id="view-furnace" class="view active">
+        <div class="grid-main">
+          <div class="card stone-panel">
+            <div id="crucibleBox" class="crucible-box">
+              <div class="furnace-chamber">
+                <div class="furnace-meta">
+                  <span>配合炉（地金クリックで入替）</span>
+                  <span id="furnaceTemp" class="temp-pill">🔥 1,020℃</span>
+                </div>
+                <div id="ingotSlots" class="ingot-slots"></div>
+                <div class="crucible-pot-wrap">
+                  <div class="crucible-rim"></div>
+                  <div class="crucible-pot"><div id="moltenPool" class="molten-pool"></div></div>
+                </div>
+                <div class="fire-bed" aria-hidden="true">
+                  <span class="flame"></span><span class="flame"></span><span class="flame"></span>
+                  <span class="flame"></span><span class="flame"></span><span class="flame"></span>
+                  <span class="flame"></span>
+                </div>
+              </div>
+              <div class="ratio-steps" id="ratioSteps"></div>
+            </div>
+
+            <div class="opt-grid">
+              <div class="opt-col">
+                <span class="opt-label">投入量</span>
+                <button id="qual1" class="choice-box active" type="button"><span class="title">基本 ×1</span></button>
+                <button id="qual2" class="choice-box" type="button"><span class="title">追い足し ×2</span></button>
+              </div>
+              <div class="opt-col">
+                <span class="opt-label">種類</span>
+                <button id="typeSword" class="choice-box active" type="button"><span class="title">⚔️ 剣</span></button>
+                <button id="typePick" class="choice-box" type="button"><span class="title">⛏️ ツルハシ</span></button>
+              </div>
+              <div class="opt-col">
+                <span class="opt-label">柄（木）</span>
+                <button id="woodOak" class="choice-box active" type="button"><span class="title">カシ（安定）</span></button>
+                <button id="woodHickory" class="choice-box" type="button"><span class="title">ヒッコリー（速）</span></button>
+              </div>
+            </div>
+
+            <button id="castBtn" class="btn primary" type="button" style="padding:9px;font-size:13px;">鋳造する</button>
+          </div>
+
+          <div class="card stone-panel">
+            <div class="card-head">
+              <h2>鋳造プレビュー</h2>
+              <span id="previewStateBadge" class="res-chip">発見済</span>
+            </div>
+
+            <div class="alloy-hero">
+              <div id="previewIngot" class="ingot-icon">⚔️</div>
+              <div>
+                <div id="previewTitle" style="font-size:14.5px;font-weight:700;">実用青銅の剣</div>
+                <div id="previewSub" class="subnote"></div>
+              </div>
+            </div>
+
+            <div class="axes-list" id="axesList"></div>
+
+            <div class="traits" id="traitsList"></div>
+
+            <div id="previewStats" class="spec-box"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. 鍛冶台 -->
+      <section id="view-forge" class="view">
+        <div class="grid-main">
+          <div class="card iron-panel">
+            <div class="card-head"><h2>所持装備</h2><span class="subnote">個別管理</span></div>
+            <div class="gear-list" id="gearList"></div>
+          </div>
+          <div class="card iron-panel">
+            <div class="card-head">
+              <h2 id="compareSubtitle">比較</h2>
+              <button id="equipSelectedBtn" class="btn primary" type="button">装着</button>
+            </div>
+            <table class="compare-table">
+              <thead><tr><th>項目</th><th>装備中</th><th>選択中</th><th>差</th></tr></thead>
+              <tbody id="compareBody"></tbody>
+            </table>
+            <div class="seg-2">
+              <button id="swapOakBtn" class="btn" type="button">カシ柄へ変更</button>
+              <button id="swapHickoryBtn" class="btn" type="button">ヒッコリー柄へ変更</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. 合金図鑑 -->
+      <section id="view-codex" class="view">
+        <div class="card book-panel" style="height:100%;">
+          <div class="card-head"><h2>合金図鑑</h2><span class="subnote">未発見 → ヒント → 解放</span></div>
+          <div class="codex-grid" id="codexGrid"></div>
+        </div>
+      </section>
+
+      <!-- 4. 持ち物・標本棚 -->
+      <section id="view-inventory" class="view">
+        <div class="grid-main">
+          <div class="card leather-panel">
+            <div class="card-head"><h2>持ち物（革鞄）</h2><span id="bagCapText" class="res-chip">6 / 12</span></div>
+            <div class="inv-slots" id="invSlots"></div>
+          </div>
+          <div class="card wood-panel">
+            <div class="card-head"><h2>町の標本棚</h2><span id="townProgress" class="res-chip">復興 33%</span></div>
+            <div class="shelf-grid" id="shelfGrid"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    (() => {
+      const ALLOYS = {
+        '4:1': {
+          ratio: '4:1', copper: 4, tin: 1, name: '実用青銅', color: '#e6ad5c',
+          hint: '手記：「銅を多く、錫を少し混ぜると扱いやすい黄金色」',
+          summary: '硬さと粘りの万能型。',
+          axes: { hardness: 8, toughness: 8, heat: 6, corrosion: 8, magic: 5, thermal: 7 },
+          traits: [['安定', 'good'], ['非磁性', 'good'], ['耐食◎', 'good']],
+          sword: { damage: 4, speed: 0.30, shellBreak: 1 },
+          pick:  { canBreakHard: true, rockHits: 1, hardHits: 2 }
+        },
+        '3:2': {
+          ratio: '3:2', copper: 3, tin: 2, name: '鐘青銅', color: '#e8cf8e',
+          hint: '手記：「錫を4割まで増やすと高く澄んだ音が響く」',
+          summary: '殻2枚を一撃破壊（やや重い）。',
+          axes: { hardness: 10, toughness: 4, heat: 6, corrosion: 7, magic: 6, thermal: 5 },
+          traits: [['響き', 'good'], ['殻割り×2', 'good'], ['重い', 'warn']],
+          sword: { damage: 5, speed: 0.40, shellBreak: 2 },
+          pick:  { canBreakHard: true, rockHits: 1, hardHits: 1 }
+        },
+        '2:3': {
+          ratio: '2:3', copper: 2, tin: 3, name: '白銅', color: '#dce6ed',
+          hint: '手記：「錫が過半数で白銀に輝くが欠けやすい」',
+          summary: '高硬度・高威力だが脆い。',
+          axes: { hardness: 11, toughness: 2, heat: 5, corrosion: 9, magic: 7, thermal: 4 },
+          traits: [['鋭さ', 'good'], ['反射', 'good'], ['脆い', 'warn']],
+          sword: { damage: 6, speed: 0.50, shellBreak: 2 },
+          pick:  { canBreakHard: true, rockHits: 1, hardHits: 2 }
+        },
+        '1:4': {
+          ratio: '1:4', copper: 1, tin: 4, name: '脆い錫塊', color: '#99a3ad',
+          hint: '手記：「錫を入れすぎた失敗作。すぐ崩れる」',
+          summary: '明確な谷（失敗配合）。',
+          axes: { hardness: 3, toughness: 1, heat: 2, corrosion: 6, magic: 2, thermal: 3 },
+          traits: [['谷・脆い', 'warn'], ['殻弾かれ', 'warn']],
+          sword: { damage: 2, speed: 0.45, shellBreak: 0 },
+          pick:  { canBreakHard: false, rockHits: 2, hardHits: 99 }
+        }
+      };
+
+      const RATIO_KEYS = ['4:1', '3:2', '2:3', '1:4'];
+      const AXES_META = [
+        ['hardness', '硬さ', '#e6ad5c'],
+        ['toughness', '粘り', '#6ec48a'],
+        ['heat', '耐熱', '#e87848'],
+        ['corrosion', '耐食', '#5ab8d4'],
+        ['magic', '魔力', '#9b8af8'],
+        ['thermal', '熱伝', '#f0c456']
+      ];
+      const HANDLES = {
+        oak: { name: 'カシ', speedMul: 1.0 },
+        hickory: { name: 'ヒッコリー', speedMul: 0.85 }
+      };
+
+      let audioCtx = null, muted = false;
+      const ensureAudio = () => {
+        if (muted) return null;
+        if (!audioCtx) { const C = window.AudioContext || window.webkitAudioContext; if (C) audioCtx = new C(); }
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+        return audioCtx;
+      };
+      const tone = (f1, dur, type = 'triangle', vol = 0.06, f2 = null) => {
+        const c = ensureAudio(); if (!c) return;
+        const now = c.currentTime, o = c.createOscillator(), g = c.createGain();
+        o.type = type; o.frequency.setValueAtTime(f1, now);
+        if (f2) o.frequency.exponentialRampToValueAtTime(Math.max(30, f2), now + dur);
+        g.gain.setValueAtTime(vol, now); g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+        o.connect(g); g.connect(c.destination); o.start(now); o.stop(now + dur);
+      };
+      const SFX = {
+        click: () => tone(420, 0.04, 'sine', 0.04, 520),
+        forge: () => { tone(620, 0.12, 'triangle', 0.09, 440); setTimeout(() => tone(880, 0.16, 'sine', 0.07, 660), 90); },
+        discover: () => { tone(523, 0.1, 'triangle', 0.08); setTimeout(() => tone(659, 0.1, 'triangle', 0.08), 90); setTimeout(() => tone(784, 0.2, 'triangle', 0.09), 180); }
+      };
+
+      const state = {
+        tab: 'furnace',
+        res: { copper: 14, tin: 10, oak: 5, hickory: 4 },
+        ratio: '4:1',
+        quality: 1,
+        craftType: 'sword',
+        handle: 'oak',
+        discovered: new Set(['4:1']),
+        hinted: new Set(['3:2']),
+        gear: [
+          { id: 'g1', type: 'sword', ratio: '4:1', name: '銅の剣', color: '#d47c45', quality: 0, handle: 'oak', damage: 2, baseSpeed: 0.28, shellBreak: 0, canBreakHard: false, hardHits: 99 },
+          { id: 'g2', type: 'sword', ratio: '4:1', name: '実用青銅の剣', color: '#e6ad5c', quality: 1, handle: 'oak', damage: 4, baseSpeed: 0.30, shellBreak: 1, canBreakHard: false, hardHits: 99 }
+        ],
+        equippedSwordId: 'g2',
+        equippedPickId: null,
+        selectedGearId: 'g2',
+        specimens: [
+          { id: 'sp1', name: '遺跡の青銅片', area: '砂丘', color: '#9ab3e8', placed: true },
+          { id: 'sp2', name: '浮遊鉱結晶', area: '浮島', color: '#63e6f2', placed: false },
+          { id: 'sp3', name: '黒曜石の塊', area: '地下', color: '#8d6ec4', placed: false }
+        ]
+      };
+
+      const $ = id => document.getElementById(id);
+      let toastTimer = null;
+      const toast = msg => {
+        const el = $('toast'); el.textContent = msg; el.classList.add('show');
+        clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+      };
+      const effSpeed = item => Number((item.baseSpeed * HANDLES[item.handle].speedMul).toFixed(2));
+
+      function render() {
+        $('resCopper').textContent = state.res.copper;
+        $('resTin').textContent = state.res.tin;
+        $('resOak').textContent = state.res.oak;
+        $('resHickory').textContent = state.res.hickory;
+        $('gearCountBadge').textContent = state.gear.length;
+        $('codexBadge').textContent = `${state.discovered.size}/${RATIO_KEYS.length}`;
+        const used = 4 + state.gear.length;
+        $('bagBadge').textContent = `${used}/12`;
+        $('bagCapText').textContent = `${used} / 12`;
+
+        document.body.className = `bg-${state.tab}`;
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === state.tab));
+        document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === `view-${state.tab}`));
+
+        renderFurnace();
+        renderForge();
+        renderCodex();
+        renderInventory();
+      }
+
+      function renderFurnace() {
+        const spec = ALLOYS[state.ratio];
+        const mul = state.quality;
+        const nc = spec.copper * mul, nt = spec.tin * mul;
+        const canAfford = state.res.copper >= nc && state.res.tin >= nt && state.res[state.handle] >= 1;
+        const bagFull = (4 + state.gear.length) >= 12;
+
+        const tempC = 940 + spec.copper * 25 + (mul > 1 ? 110 : 0);
+        $('furnaceTemp').textContent = `🔥 ${tempC.toLocaleString()}℃`;
+        const pool = $('moltenPool');
+        pool.style.height = mul > 1 ? '86%' : '62%';
+        pool.style.background = `linear-gradient(180deg, #fff5d6 0%, ${spec.color} 32%, #a84818 100%)`;
+
+        $('ingotSlots').innerHTML = Array.from({ length: 5 }, (_, i) => {
+          const isC = i < spec.copper;
+          return `<button class="ingot-slot ${isC ? 'copper' : 'tin'}" data-slot-idx="${i}" type="button">${isC ? '銅' : '錫'}</button>`;
+        }).join('');
+        $('ingotSlots').querySelectorAll('[data-slot-idx]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            ensureAudio(); SFX.click();
+            const idx = Number(btn.dataset.slotIdx);
+            const nextC = idx < spec.copper ? Math.max(1, spec.copper - 1) : Math.min(4, spec.copper + 1);
+            state.ratio = `${nextC}:${5 - nextC}`;
+            render();
+          });
+        });
+
+        $('ratioSteps').innerHTML = RATIO_KEYS.map(rk => {
+          const a = ALLOYS[rk];
+          const label = state.discovered.has(rk) ? a.name : (state.hinted.has(rk) ? 'ヒント' : '？？？');
+          return `<button class="step-card${state.ratio === rk ? ' active' : ''}" data-ratio="${rk}" type="button">
+            <span class="r-num">${a.copper}:${a.tin}</span><span class="r-name">${label}</span>
+          </button>`;
+        }).join('');
+        $('ratioSteps').querySelectorAll('[data-ratio]').forEach(btn => {
+          btn.addEventListener('click', () => { ensureAudio(); SFX.click(); state.ratio = btn.dataset.ratio; render(); });
+        });
+
+        $('qual1').classList.toggle('active', state.quality === 1);
+        $('qual2').classList.toggle('active', state.quality === 2);
+        $('typeSword').classList.toggle('active', state.craftType === 'sword');
+        $('typePick').classList.toggle('active', state.craftType === 'pick');
+        $('woodOak').classList.toggle('active', state.handle === 'oak');
+        $('woodHickory').classList.toggle('active', state.handle === 'hickory');
+
+        const known = state.discovered.has(state.ratio);
+        const hint = state.hinted.has(state.ratio);
+        $('previewStateBadge').textContent = known ? '発見済' : (hint ? 'ヒント' : '未発見');
+        $('previewIngot').style.background = known ? spec.color : '#3a404a';
+        $('previewIngot').textContent = state.craftType === 'sword' ? '⚔️' : '⛏️';
+        const qSuf = mul > 1 ? ' +1' : '';
+        $('previewTitle').textContent = known
+          ? `${spec.name}の${state.craftType === 'sword' ? '剣' : 'ツルハシ'}${qSuf}`
+          : `？？？の${state.craftType === 'sword' ? '剣' : 'ツルハシ'}${qSuf}`;
+        $('previewSub').textContent = known ? spec.summary : (hint ? spec.hint : '未鋳造の配合');
+
+        $('axesList').innerHTML = AXES_META.map(([key, label, col]) => {
+          const val = known ? Math.min(12, spec.axes[key] + (mul > 1 && key === 'hardness' ? 1 : 0)) : 0;
+          const pct = known ? Math.round((val / 12) * 100) : 0;
+          return `<div class="axis-row">
+            <span style="color:var(--muted);">${label}</span>
+            <div class="axis-track"><div class="axis-fill" style="width:${pct}%;background:${col};"></div></div>
+            <strong style="text-align:right;">${known ? val : '?'}</strong>
+          </div>`;
+        }).join('');
+
+        $('traitsList').innerHTML = known
+          ? spec.traits.map(([t, c]) => `<span class="trait-tag ${c}">${t}</span>`).join('')
+          : `<span class="trait-tag">特性: ？？？</span>`;
+
+        if (!known) {
+          $('previewStats').textContent = `消費: 銅${nc}・錫${nt}・${HANDLES[state.handle].name}1`;
+        } else if (state.craftType === 'sword') {
+          const dmg = spec.sword.damage + (mul > 1 ? 1 : 0);
+          const spd = (spec.sword.speed * HANDLES[state.handle].speedMul).toFixed(2);
+          $('previewStats').textContent = `威力 ${dmg} / 振り ${spd}s / 殻 ${spec.sword.shellBreak} ｜ 消費: 銅${nc}・錫${nt}・木1`;
+        } else {
+          const hh = spec.pick.canBreakHard ? Math.max(1, spec.pick.hardHits - (mul > 1 ? 1 : 0)) : '不可';
+          $('previewStats').textContent = `硬岩 ${spec.pick.canBreakHard ? hh + '回' : '不可'} / 岩 ${spec.pick.rockHits}回 ｜ 消費: 銅${nc}・錫${nt}・木1`;
+        }
+
+        const castBtn = $('castBtn');
+        castBtn.disabled = !canAfford || bagFull;
+        castBtn.textContent = bagFull ? '鞄が満杯 (12/12)' : (!canAfford ? `素材不足 (銅${nc}・錫${nt}・木1)` : `鋳造する（銅${nc}・錫${nt}・木1）`);
+      }
+
+      function renderForge() {
+        $('gearList').innerHTML = state.gear.map(g => {
+          const isEq = g.id === state.equippedSwordId || g.id === state.equippedPickId;
+          const isSel = g.id === state.selectedGearId;
+          return `<div class="gear-item${isSel ? ' selected' : ''}" data-gid="${g.id}">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="gear-swatch" style="background:${g.color};"></span>
+              <div>
+                <strong>${g.name}${g.quality > 1 ? ' +1' : ''}</strong>
+                <span class="subnote"> (${HANDLES[g.handle].name})</span>
+              </div>
+            </div>
+            ${isEq ? '<span class="trait-tag good">装備</span>' : ''}
+          </div>`;
+        }).join('');
+        $('gearList').querySelectorAll('[data-gid]').forEach(el => {
+          el.addEventListener('click', () => { ensureAudio(); SFX.click(); state.selectedGearId = el.dataset.gid; render(); });
+        });
+
+        const sel = state.gear.find(g => g.id === state.selectedGearId) || state.gear[0];
+        if (!sel) return;
+        const eqId = sel.type === 'sword' ? state.equippedSwordId : state.equippedPickId;
+        const cur = state.gear.find(g => g.id === eqId) || sel;
+
+        $('compareSubtitle').textContent = `${sel.name}${sel.quality > 1 ? ' +1' : ''}（${HANDLES[sel.handle].name}）`;
+        $('equipSelectedBtn').disabled = sel.id === eqId;
+        $('equipSelectedBtn').textContent = sel.id === eqId ? '装備中' : '装着する';
+
+        const rows = sel.type === 'sword'
+          ? [
+              ['威力', cur.damage, sel.damage, sel.damage - cur.damage, false],
+              ['振り', `${effSpeed(cur)}s`, `${effSpeed(sel)}s`, Number((effSpeed(sel) - effSpeed(cur)).toFixed(2)), true],
+              ['殻割り', `${cur.shellBreak}`, `${sel.shellBreak}`, sel.shellBreak - cur.shellBreak, false],
+              ['柄', HANDLES[cur.handle].name, HANDLES[sel.handle].name, 0, false]
+            ]
+          : [
+              ['硬岩', cur.canBreakHard ? '可' : '不可', sel.canBreakHard ? '可' : '不可', (sel.canBreakHard ? 1 : 0) - (cur.canBreakHard ? 1 : 0), false],
+              ['硬岩回数', cur.canBreakHard ? `${cur.hardHits}` : '-', sel.canBreakHard ? `${sel.hardHits}` : '-', (sel.canBreakHard && cur.canBreakHard) ? sel.hardHits - cur.hardHits : 0, true],
+              ['柄', HANDLES[cur.handle].name, HANDLES[sel.handle].name, 0, false]
+            ];
+
+        $('compareBody').innerHTML = rows.map(([k, v1, v2, d, low]) => {
+          let dh = '<span style="color:var(--muted);">±0</span>';
+          if (d !== 0) { const ok = low ? d < 0 : d > 0; dh = `<span class="${ok ? 'diff-up' : 'diff-down'}">${d > 0 ? '+' : ''}${d}</span>`; }
+          return `<tr><th>${k}</th><td>${v1}</td><td><strong>${v2}</strong></td><td>${dh}</td></tr>`;
+        }).join('');
+
+        $('swapOakBtn').disabled = sel.handle === 'oak' || state.res.oak < 1;
+        $('swapHickoryBtn').disabled = sel.handle === 'hickory' || state.res.hickory < 1;
+      }
+
+      function renderCodex() {
+        $('codexGrid').innerHTML = RATIO_KEYS.map(rk => {
+          const a = ALLOYS[rk], known = state.discovered.has(rk), hint = state.hinted.has(rk);
+          if (known) {
+            return `<div class="codex-card discovered">
+              <div style="display:flex;justify-content:space-between;"><strong><span class="dot" style="background:${a.color};margin-right:5px;"></span>${a.name}</strong><span class="subnote">${a.copper}:${a.tin}</span></div>
+              <p class="subnote">${a.summary}</p>
+              <div class="traits">${a.traits.map(([t, c]) => `<span class="trait-tag ${c}">${t}</span>`).join('')}</div>
+            </div>`;
+          }
+          return `<div class="codex-card${hint ? ' hinted' : ''}">
+            <div style="display:flex;justify-content:space-between;"><strong>？？？</strong><span class="subnote">${a.copper}:${a.tin}</span></div>
+            <p class="subnote">${hint ? a.hint : '未発見'}</p>
+          </div>`;
+        }).join('');
+      }
+
+      function renderInventory() {
+        const items = [
+          { name: '銅地金', sub: `×${state.res.copper}`, color: '#d47c45' },
+          { name: '錫地金', sub: `×${state.res.tin}`, color: '#9eb7c7' },
+          { name: 'カシ材', sub: `×${state.res.oak}`, color: '#b08456' },
+          { name: 'ヒッコリー', sub: `×${state.res.hickory}`, color: '#d9b37c' },
+          ...state.gear.map(g => ({ name: `${g.name}${g.quality > 1 ? '+1' : ''}`, sub: HANDLES[g.handle].name, color: g.color }))
+        ];
+        $('invSlots').innerHTML = Array.from({ length: 12 }, (_, i) => {
+          const it = items[i];
+          return it
+            ? `<div class="slot"><div style="display:flex;align-items:center;gap:4px;"><span class="dot" style="background:${it.color};"></span><strong>${it.name}</strong></div><span class="subnote">${it.sub}</span></div>`
+            : `<div class="slot empty">空</div>`;
+        }).join('');
+
+        const placed = state.specimens.filter(s => s.placed).length;
+        $('townProgress').textContent = `復興 ${Math.round((placed / state.specimens.length) * 100)}%`;
+        $('shelfGrid').innerHTML = state.specimens.map(sp => `
+          <div class="specimen${sp.placed ? ' placed' : ''}" data-sp="${sp.id}">
+            <div style="width:20px;height:20px;background:${sp.color};margin:0 auto 4px;border:2px solid #14171a;"></div>
+            <div style="font-weight:700;font-size:11.5px;">${sp.name}</div>
+            <div class="subnote">${sp.placed ? '展示中' : sp.area}</div>
+          </div>
+        `).join('');
+        $('shelfGrid').querySelectorAll('[data-sp]').forEach(el => {
+          el.addEventListener('click', () => {
+            ensureAudio(); SFX.click();
+            const sp = state.specimens.find(s => s.id === el.dataset.sp);
+            if (sp) { sp.placed = !sp.placed; render(); }
+          });
+        });
+      }
+
+      document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => { ensureAudio(); SFX.click(); state.tab = b.dataset.tab; render(); }));
+      $('qual1').addEventListener('click', () => { ensureAudio(); SFX.click(); state.quality = 1; render(); });
+      $('qual2').addEventListener('click', () => { ensureAudio(); SFX.click(); state.quality = 2; render(); });
+      $('typeSword').addEventListener('click', () => { ensureAudio(); SFX.click(); state.craftType = 'sword'; render(); });
+      $('typePick').addEventListener('click', () => { ensureAudio(); SFX.click(); state.craftType = 'pick'; render(); });
+      $('woodOak').addEventListener('click', () => { ensureAudio(); SFX.click(); state.handle = 'oak'; render(); });
+      $('woodHickory').addEventListener('click', () => { ensureAudio(); SFX.click(); state.handle = 'hickory'; render(); });
+
+      $('castBtn').addEventListener('click', () => {
+        ensureAudio();
+        const spec = ALLOYS[state.ratio], mul = state.quality, nc = spec.copper * mul, nt = spec.tin * mul;
+        if (state.res.copper < nc || state.res.tin < nt || state.res[state.handle] < 1 || 4 + state.gear.length >= 12) return;
+        state.res.copper -= nc; state.res.tin -= nt; state.res[state.handle] -= 1;
+        const isNew = !state.discovered.has(state.ratio);
+        state.discovered.add(state.ratio); state.hinted.add(state.ratio);
+        const item = {
+          id: `g-${Date.now()}`, type: state.craftType, ratio: state.ratio,
+          name: `${spec.name}の${state.craftType === 'sword' ? '剣' : 'ツルハシ'}`,
+          color: spec.color, quality: mul, handle: state.handle,
+          damage: spec.sword.damage + (mul > 1 ? 1 : 0), baseSpeed: spec.sword.speed, shellBreak: spec.sword.shellBreak,
+          canBreakHard: spec.pick.canBreakHard, hardHits: spec.pick.canBreakHard ? Math.max(1, spec.pick.hardHits - (mul > 1 ? 1 : 0)) : 99
+        };
+        state.gear.push(item); state.selectedGearId = item.id;
+
+        const box = $('crucibleBox'); box.classList.remove('casting'); void box.offsetWidth; box.classList.add('casting');
+        setTimeout(() => box.classList.remove('casting'), 600);
+        if (isNew) { SFX.discover(); toast(`新合金「${spec.name}」を発見！`); }
+        else { SFX.forge(); toast(`${item.name}${mul > 1 ? ' +1' : ''} を鋳造`); }
+        render();
+      });
+
+      $('equipSelectedBtn').addEventListener('click', () => {
+        ensureAudio(); SFX.click();
+        const sel = state.gear.find(g => g.id === state.selectedGearId);
+        if (!sel) return;
+        if (sel.type === 'sword') state.equippedSwordId = sel.id; else state.equippedPickId = sel.id;
+        toast(`${sel.name} を装着`); render();
+      });
+
+      const swapHandle = h => {
+        ensureAudio();
+        const sel = state.gear.find(g => g.id === state.selectedGearId);
+        if (!sel || sel.handle === h || state.res[h] < 1) return;
+        state.res[h] -= 1; sel.handle = h; SFX.forge(); toast(`${HANDLES[h].name}柄へ変更`); render();
+      };
+      $('swapOakBtn').addEventListener('click', () => swapHandle('oak'));
+      $('swapHickoryBtn').addEventListener('click', () => swapHandle('hickory'));
+
+      $('readNoteBtn').addEventListener('click', () => {
+        ensureAudio();
+        const next = RATIO_KEYS.find(rk => !state.hinted.has(rk) && !state.discovered.has(rk));
+        if (next) { state.hinted.add(next); SFX.discover(); toast(`ヒント解放：${next}`); }
+        else { SFX.click(); toast('全ヒント解放済'); }
+        render();
+      });
+      $('refillBtn').addEventListener('click', () => {
+        ensureAudio(); SFX.click();
+        state.res.copper += 10; state.res.tin += 10; state.res.oak += 3; state.res.hickory += 3;
+        toast('素材を補充しました'); render();
+      });
+      $('muteBtn').addEventListener('click', () => {
+        muted = !muted; $('muteBtn').textContent = muted ? '音OFF' : '音ON';
+      });
+
+      window.addEventListener('load', render);
+    })();
+  </script>
+</body>
+</html>
